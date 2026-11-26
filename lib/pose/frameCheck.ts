@@ -9,6 +9,10 @@ import {
 } from '@/lib/pose-engine';
 import type { PostureMode } from '@/lib/game/engineAdapter';
 
+// Chỉ số khớp 2 mắt trong MediaPipe Pose (dùng dự phòng cho bài Nghiêng cổ khi tai bị che bởi tóc/tai nghe)
+const L_EYE_INDEX = 2;
+const R_EYE_INDEX = 5;
+
 /**
  * Các ngưỡng kiểm tra khung hình (Lớp 0) và chống nhấp nháy (300–500ms).
  * - Chế độ Đứng: kiểm tra bề ngang vai và chiều cao thân (vai->hông).
@@ -42,6 +46,8 @@ export interface FrameCheckResult {
   torsoHeightRatio: number | null;
   /** Khoảng cách chuẩn hóa vai–tai dùng để kiểm tra cự ly ở chế độ Ngồi. */
   shoulderEarRatio: number | null;
+  /** Danh sách chỉ số các khớp bắt buộc đang thiếu độ tin cậy (< 0.6) để báo rõ trên UI. */
+  missingLandmarks?: number[];
 }
 
 export interface FrameStabilitySnapshot {
@@ -54,11 +60,22 @@ export interface FrameStabilitySnapshot {
   shoulderWidthRatio: number | null;
   torsoHeightRatio: number | null;
   shoulderEarRatio: number | null;
+  missingLandmarks?: number[];
+}
+
+/** Tính góc nghiêng (độ °) của đoạn nối 2 khớp so với phương ngang (đã hiệu chỉnh tỷ lệ khung hình). */
+function lineTiltFromIndices(frame: Frame, idxA: number, idxB: number): number {
+  const a = frame.lm[idxA];
+  const b = frame.lm[idxB];
+  const dx = Math.abs((b.x - a.x) * frame.aspect);
+  const dy = b.y - a.y;
+  return Math.abs((Math.atan2(dy, dx) * 180) / Math.PI);
 }
 
 /**
  * Danh sách khớp bắt buộc theo từng động tác và chế độ Đứng / Ngồi:
- * - Chế độ Ngồi: CHỈ yêu cầu khớp thân trên (mũi, tai, vai, khuỷu, cổ tay tùy bài; hông không bắt buộc).
+ * - Chế độ Ngồi: chỉ bắt buộc 3 khớp neo thân trên luôn thấy rõ trước webcam laptop
+ *   (`NOSE`, `L_SHOULDER`, `R_SHOULDER`), tránh chặn oan khi cổ tay nghỉ dưới bàn hoặc tai bị che.
  * - Chế độ Đứng: Squat bỏ cổ chân/bàn chân; các động tác còn lại theo EXERCISES của pose-engine.ts.
  */
 export function getRequiredLandmarks(
@@ -66,26 +83,7 @@ export function getRequiredLandmarks(
   mode: PostureMode = 'standing'
 ): number[] {
   if (mode === 'seated') {
-    switch (exerciseId) {
-      case 'overhead_reach':
-        return [
-          LM.NOSE,
-          LM.L_SHOULDER,
-          LM.R_SHOULDER,
-          LM.L_ELBOW,
-          LM.R_ELBOW,
-          LM.L_WRIST,
-          LM.R_WRIST,
-        ];
-      case 'side_bend':
-        // Chỉ yêu cầu mũi và 2 vai; hông là tùy chọn nếu thấy được
-        return [LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER];
-      case 'neck_tilt':
-        return [LM.NOSE, LM.L_EAR, LM.R_EAR, LM.L_SHOULDER, LM.R_SHOULDER];
-      default:
-        // Fallback an toàn cho các động tác khác nếu bị gọi ở chế độ ngồi
-        return [LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER];
-    }
+    return [LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER];
   }
 
   const base = EXERCISES[exerciseId].required;
@@ -95,31 +93,10 @@ export function getRequiredLandmarks(
   return [...base];
 }
 
-/** Kiểm tra nhanh cặp hông có nhìn rõ và nằm trong khung hình hay không. */
-function areHipsClearlyVisible(frame: Frame): boolean {
-  if (!frame.lm || frame.lm.length < 33) return false;
-  const lh = frame.lm[LM.L_HIP];
-  const rh = frame.lm[LM.R_HIP];
-  const minVis = FRAME_CHECK_CONFIG.minVisibility;
-  return (
-    lh.visibility >= minVis &&
-    rh.visibility >= minVis &&
-    lh.x >= 0 &&
-    lh.x <= 1 &&
-    rh.x >= 0 &&
-    rh.x <= 1 &&
-    lh.y >= 0 &&
-    lh.y <= 1 &&
-    rh.y >= 0 &&
-    rh.y <= 1
-  );
-}
-
 /**
  * Trả về ExerciseDef truyền vào `new RepCounter(def)` phù hợp với chế độ Đứng / Ngồi
  * mà KHÔNG sửa `lib/pose-engine.ts`.
- * - Giữ nguyên 100% id, rest, peak, holdMs, minRepMs, maxRepMs, baseXp để finalizeRun() xác thực đồng nhất.
- * - Riêng `side_bend` ở chế độ Ngồi: bỏ bắt buộc hông; nếu bàn học che hông thì đo độ nghiêng đường nối hai vai.
+ * Giữ nguyên 100% id, rest, peak, holdMs, minRepMs, maxRepMs, baseXp để finalizeRun() xác thực chuẩn.
  */
 export function getExerciseDefForPosture(
   exerciseId: ExerciseId,
@@ -130,41 +107,105 @@ export function getExerciseDefForPosture(
     return base;
   }
 
-  if (exerciseId === 'overhead_reach' || exerciseId === 'neck_tilt') {
+  const seatedRequired = getRequiredLandmarks(exerciseId, 'seated');
+
+  // 1. Vươn vai (ngồi): tay đặt nghỉ trên bàn -> tự trả về base.rest để mở khóa rep;
+  //    khi giơ lên đo theo cổ tay (và hỗ trợ trường hợp cổ tay chạm mép trên khung hình).
+  if (exerciseId === 'overhead_reach') {
+    const wristsUpCheck = (f: Frame): boolean => {
+      const nose = f.lm[LM.NOSE];
+      const lw = f.lm[LM.L_WRIST];
+      const rw = f.lm[LM.R_WRIST];
+      const le = f.lm[LM.L_ELBOW];
+      const re = f.lm[LM.R_ELBOW];
+      const ls = f.lm[LM.L_SHOULDER];
+      const rs = f.lm[LM.R_SHOULDER];
+
+      const wristsClearlyUp =
+        lw.visibility >= 0.35 &&
+        rw.visibility >= 0.35 &&
+        lw.y < nose.y &&
+        rw.y < nose.y;
+
+      const elbowsHighAboveShoulders =
+        le.visibility >= 0.45 &&
+        re.visibility >= 0.45 &&
+        le.y < ls.y &&
+        re.y < rs.y &&
+        lw.y < nose.y &&
+        rw.y < nose.y;
+
+      return wristsClearlyUp || elbowsHighAboveShoulders;
+    };
+
     return {
       ...base,
-      required: getRequiredLandmarks(exerciseId, 'seated'),
+      required: seatedRequired,
+      metric: (f: Frame) => {
+        const lw = f.lm[LM.L_WRIST];
+        const rw = f.lm[LM.R_WRIST];
+        const le = f.lm[LM.L_ELBOW];
+        const re = f.lm[LM.R_ELBOW];
+        const ls = f.lm[LM.L_SHOULDER];
+        const rs = f.lm[LM.R_SHOULDER];
+        const nose = f.lm[LM.NOSE];
+
+        if (lw.visibility >= 0.35 && rw.visibility >= 0.35) {
+          return base.metric(f);
+        }
+
+        // Khi vươn tay quá cao làm cổ tay sát/vượt mép trên khung hình nhưng 2 khuỷu tay đã nâng cao hơn vai
+        if (
+          le.visibility >= 0.45 &&
+          re.visibility >= 0.45 &&
+          le.y < ls.y &&
+          re.y < rs.y &&
+          lw.y < nose.y &&
+          rw.y < nose.y
+        ) {
+          return Math.max(base.peak, base.metric(f));
+        }
+
+        // Tay đang đặt nghỉ trên bàn / ngoài cạnh dưới khung hình -> tư thế nghỉ
+        return base.rest;
+      },
+      form: base.form.map((check) =>
+        check.id === 'BOTH_WRISTS_UP'
+          ? { ...check, pass: wristsUpCheck }
+          : check
+      ),
     };
   }
 
+  // 2. Nghiêng người (ngồi): đo nhất quán theo góc nghiêng đường nối hai vai (không phụ thuộc hông dưới bàn)
   if (exerciseId === 'side_bend') {
-    const hipFormCheck = base.form[0];
     return {
       ...base,
-      required: getRequiredLandmarks('side_bend', 'seated'),
+      required: seatedRequired,
+      metric: (f: Frame) =>
+        lineTiltFromIndices(f, LM.L_SHOULDER, LM.R_SHOULDER),
+      form: [],
+    };
+  }
+
+  // 3. Nghiêng cổ (ngồi): ưu tiên 2 tai; nếu tai bị tóc/tai nghe che thì tự chuyển sang đường nối 2 mắt
+  if (exerciseId === 'neck_tilt') {
+    return {
+      ...base,
+      required: seatedRequired,
       metric: (f: Frame) => {
-        // Nếu thấy rõ cả hai hông -> dùng nguyên công thức torsoLean gốc của pose-engine
-        if (areHipsClearlyVisible(f)) {
+        const lEar = f.lm[LM.L_EAR];
+        const rEar = f.lm[LM.R_EAR];
+        if (lEar.visibility >= 0.35 && rEar.visibility >= 0.35) {
           return base.metric(f);
         }
-        // Khi bàn học che hông -> đo góc nghiêng đường nối hai vai (tương đương độ nghiêng thân trên)
-        const ls = f.lm[LM.L_SHOULDER];
-        const rs = f.lm[LM.R_SHOULDER];
-        const dx = Math.abs((rs.x - ls.x) * f.aspect);
-        const dy = rs.y - ls.y;
-        return Math.abs((Math.atan2(dy, dx) * 180) / Math.PI);
+        const lEye = f.lm[L_EYE_INDEX];
+        const rEye = f.lm[R_EYE_INDEX];
+        if (lEye && rEye && lEye.visibility >= 0.35 && rEye.visibility >= 0.35) {
+          return lineTiltFromIndices(f, L_EYE_INDEX, R_EYE_INDEX);
+        }
+        return base.rest;
       },
-      form: hipFormCheck
-        ? [
-            {
-              id: hipFormCheck.id,
-              penalty: hipFormCheck.penalty,
-              // Chỉ kiểm tra lệch hông khi thực sự nhìn thấy hông
-              pass: (f: Frame) =>
-                areHipsClearlyVisible(f) ? hipFormCheck.pass(f) : true,
-            },
-          ]
-        : [],
     };
   }
 
@@ -174,7 +215,7 @@ export function getExerciseDefForPosture(
 /**
  * Đánh giá khung hình Lớp 0 theo từng động tác và chế độ Đứng / Ngồi:
  * - Chế độ Đứng: đo theo vai + thân (vai->hông).
- * - Chế độ Ngồi: CHỈ đo theo thân trên (bề ngang vai & khoảng cách vai–tai), không yêu cầu hông/chân.
+ * - Chế độ Ngồi: đo theo thân trên (bề ngang vai & khoảng cách vai–tai), chỉ bắt buộc Mũi + 2 Vai.
  */
 export function evaluateFrameCheck(
   frame: Frame,
@@ -187,8 +228,16 @@ export function evaluateFrameCheck(
   let shoulderWidthRatio: number | null = null;
   let torsoHeightRatio: number | null = null;
   let shoulderEarRatio: number | null = null;
+  const missingLandmarks: number[] = [];
 
   if (frame.lm && frame.lm.length >= 33) {
+    for (let i = 0; i < required.length; i++) {
+      const idx = required[i];
+      if (frame.lm[idx].visibility < cfg.minVisibility) {
+        missingLandmarks.push(idx);
+      }
+    }
+
     const ls = frame.lm[LM.L_SHOULDER];
     const rs = frame.lm[LM.R_SHOULDER];
     if (ls.visibility >= cfg.minVisibility && rs.visibility >= cfg.minVisibility) {
@@ -196,7 +245,6 @@ export function evaluateFrameCheck(
       const midShoulderX = ((ls.x + rs.x) / 2) * frame.aspect;
       const midShoulderY = (ls.y + rs.y) / 2;
 
-      // Khoảng cách vai–tai (dùng để đo cự ly ngồi xa/gần theo thân trên)
       const le = frame.lm[LM.L_EAR];
       const re = frame.lm[LM.R_EAR];
       if (le.visibility >= 0.5 && re.visibility >= 0.5) {
@@ -208,7 +256,6 @@ export function evaluateFrameCheck(
         );
       }
 
-      // Chiều cao thân vai->hông (chỉ dùng cho chế độ Đứng)
       const lh = frame.lm[LM.L_HIP];
       const rh = frame.lm[LM.R_HIP];
       if (lh.visibility >= cfg.minVisibility && rh.visibility >= cfg.minVisibility) {
@@ -218,7 +265,7 @@ export function evaluateFrameCheck(
     }
   }
 
-  // Bước 1: Kiểm tra bằng hàm qualityGate chính thức của pose-engine.ts
+  // Bước 1: Kiểm tra bằng qualityGate chính thức của pose-engine.ts
   const gate = qualityGate(frame, required, cfg.minVisibility);
   const maxShoulderWidth =
     mode === 'seated' ? cfg.seatedMaxShoulderWidth : cfg.tooCloseShoulderWidth;
@@ -235,6 +282,7 @@ export function evaluateFrameCheck(
         shoulderWidthRatio,
         torsoHeightRatio,
         shoulderEarRatio,
+        missingLandmarks,
       };
     }
 
@@ -244,6 +292,7 @@ export function evaluateFrameCheck(
       shoulderWidthRatio,
       torsoHeightRatio,
       shoulderEarRatio,
+      missingLandmarks,
     };
   }
 
@@ -391,6 +440,7 @@ export class FrameStabilityGate {
       shoulderWidthRatio: raw.shoulderWidthRatio,
       torsoHeightRatio: raw.torsoHeightRatio,
       shoulderEarRatio: raw.shoulderEarRatio,
+      missingLandmarks: raw.missingLandmarks,
     };
   }
 }

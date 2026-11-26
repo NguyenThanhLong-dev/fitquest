@@ -19,6 +19,7 @@ export interface SetupCheckProps {
  * Thẻ trạng thái Lớp 0 (Kiểm tra khung hình):
  * - Chế độ Đứng: báo theo khung toàn thân/thân trên.
  * - Chế độ Ngồi: báo theo thân trên kèm hướng dẫn đặt webcam ngang tầm ngực–vai, cách 60–80cm.
+ * - Khi thiếu khớp (LOW_VISIBILITY): liệt kê tên cụ thể các khớp đang mờ để người tập chỉnh ngay.
  */
 export function SetupCheck({
   snapshot,
@@ -56,6 +57,16 @@ export function SetupCheck({
   const reasonText = snapshot.stableReason
     ? reasonMap[snapshot.stableReason]
     : readyText;
+
+  const missingLabels =
+    !isReady &&
+    snapshot.stableReason === 'LOW_VISIBILITY' &&
+    snapshot.missingLandmarks &&
+    snapshot.missingLandmarks.length > 0
+      ? snapshot.missingLandmarks
+          .map((idx) => frameCheck.landmarkNames[idx] ?? `#${idx}`)
+          .join(', ')
+      : null;
 
   return (
     <div
@@ -103,6 +114,12 @@ export function SetupCheck({
       <p className="mt-1.5 text-sm leading-snug">
         {isReady ? readyText : reasonText}
       </p>
+
+      {missingLabels && (
+        <p className="mt-1 text-xs font-semibold text-amber-200">
+          {frameCheck.missingJointsPrefix} {missingLabels}
+        </p>
+      )}
 
       {isSeated && !isReady && (
         <p className="mt-1.5 text-xs leading-relaxed text-sky-200/90">

@@ -8,18 +8,16 @@ import type {
 import type { CosmeticItemId, CosmeticSlot } from '@/lib/game/cosmetics';
 
 /**
- * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a + F5b + F7 + F8).
- * Giữ nguyên toàn bộ khóa cũ và bổ sung đầy đủ chuỗi cho Chế độ ngồi, Hướng dẫn, Quyền riêng tư và nút Tắt camera.
+ * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1–F5, F7, F8).
+ * Bổ sung bảng tên khớp (`landmarkNames`) để báo cụ thể khớp đang thiếu khi LOW_VISIBILITY.
  */
 export const i18n = {
-  // ── F1: Metadata toàn cục ──
   app: {
     title: 'FitQuest',
     metaDescription:
       'RPG vận động 5–10 phút tại bàn học cho sinh viên IT, kiểm chứng động tác bằng camera ngay trên máy.',
   },
 
-  // ── F1 + F5a + F5b + F7 + F8: Trang chủ (app/page.tsx) ──
   home: {
     title: 'FitQuest',
     dungeonTag: 'Hầm Ngục Vận Động · Local AI',
@@ -40,7 +38,6 @@ export const i18n = {
     cosmeticCountPrefix: 'Trang bị đã mở:',
   },
 
-  // ── F8: Chế độ tư thế Đứng / Ngồi ──
   posture: {
     label: 'Tư thế tập',
     standing: 'Đứng',
@@ -53,7 +50,6 @@ export const i18n = {
     seatedBadge: 'Chế độ Ngồi (Thân trên)',
   },
 
-  // ── F8: Màn hướng dẫn nhanh (GuideModal) ──
   guide: {
     openButtonTitle: 'Mở hướng dẫn',
     badge: 'Hướng dẫn nhanh · 30 giây',
@@ -112,7 +108,6 @@ export const i18n = {
     },
   },
 
-  // ── F8: Khung Quyền riêng tư (PrivacyModal & dòng xin camera) ──
   privacy: {
     buttonLabel: 'Quyền riêng tư',
     badge: 'Minh bạch · Xử lý cục bộ 100%',
@@ -147,7 +142,6 @@ export const i18n = {
       'Vì chạy hoàn toàn trên trình duyệt để bảo vệ quyền riêng tư và dễ chạy thử nội bộ, hệ thống không thể chống gian lận tuyệt đối (người dùng am hiểu có thể sửa bộ nhớ bằng DevTools). Sản phẩm thực tế cần máy chủ xác thực.',
   },
 
-  // ── F1 + F2 + F3 + F4 + F8: Trang chơi, camera, AI, luyện tập & thử thách sống ──
   play: {
     placeholder: 'Camera sắp có',
     backHome: 'Quay lại trang chủ',
@@ -339,6 +333,24 @@ export const i18n = {
         readyMessage: 'Khung hình đạt chuẩn — có thể bắt đầu đếm rep.',
         readyMessageSeated:
           'Khung hình thân trên đạt chuẩn — bắt đầu giãn cơ tại bàn nào!',
+        missingJointsPrefix: 'Khớp đang bị mờ/khuất:',
+        landmarkNames: {
+          0: 'Mũi',
+          7: 'Tai trái',
+          8: 'Tai phải',
+          11: 'Vai trái',
+          12: 'Vai phải',
+          13: 'Khuỷu trái',
+          14: 'Khuỷu phải',
+          15: 'Cổ tay trái',
+          16: 'Cổ tay phải',
+          23: 'Hông trái',
+          24: 'Hông phải',
+          25: 'Gối trái',
+          26: 'Gối phải',
+          27: 'Cổ chân trái',
+          28: 'Cổ chân phải',
+        } as Record<number, string>,
         reasons: {
           NO_POSE: 'Không thấy người trong khung hình. Hãy ngồi hoặc đứng vào trước camera.',
           LOW_VISIBILITY:
@@ -353,9 +365,9 @@ export const i18n = {
         seatedReasons: {
           NO_POSE: 'Chưa thấy bạn trước webcam. Hãy ngồi vào giữa khung hình.',
           LOW_VISIBILITY:
-            'Thiếu khớp thân trên (vai, mặt hoặc tay khi giơ lên). Hãy chỉnh webcam ngang tầm ngực–vai và bật thêm đèn.',
+            'Thiếu khớp thân trên (mặt hoặc hai vai đang bị mờ/khuất). Hãy chỉnh webcam ngang tầm ngực–vai và bật thêm đèn.',
           OUT_OF_FRAME:
-            'Vai hoặc tay đang sát mép khung hình. Hãy ngồi cách webcam khoảng 60–80cm để thấy rõ cả hai vai và tay.',
+            'Mặt hoặc vai đang sát mép khung hình. Hãy ngồi cách webcam khoảng 60–80cm và căn vào giữa khung.',
           TOO_FAR:
             'Bạn đang ngồi quá xa webcam (vai quá nhỏ). Hãy ngồi lại gần khoảng 60–80cm.',
           TOO_CLOSE:
@@ -442,7 +454,6 @@ export const i18n = {
     },
   },
 
-  // ── F5a + F5b: Dungeon Run & Lớp trình bày + Cosmetic ──
   dungeon: {
     modeBadge: 'Hầm Ngục · Dungeon Run',
     stagePrefix: 'Phòng',
@@ -719,7 +730,6 @@ export const i18n = {
     },
   },
 
-  // ── F7: Bảng xếp hạng minh họa & Thưởng tuần ──
   leaderboard: {
     title: 'Bảng xếp hạng tuần',
     demoBannerBadge: 'Dữ liệu minh họa (demo data)',
