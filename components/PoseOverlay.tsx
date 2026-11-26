@@ -3,10 +3,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import type { Landmark } from '@/lib/pose-engine';
 
-/**
- * Các đoạn nối xương chuẩn của 33 điểm MediaPipe Pose.
- * Khai báo tĩnh ở mức module để không bao giờ tạo lại mảng mới mỗi frame.
- */
 const POSE_CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
   // Khuôn mặt
   [0, 1], [1, 2], [2, 3], [3, 7],
@@ -25,38 +21,29 @@ const POSE_CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
 ];
 
 const TWO_PI = Math.PI * 2;
-// Chỉ vẽ các khớp đạt ngưỡng hiển thị tối thiểu
 const DRAW_MIN_VISIBILITY = 0.5;
-// Khớp với ngưỡng qualityGate (0.6) trong pose-engine.ts: xanh = rõ, vàng = hơi mờ
 const RELIABLE_VISIBILITY = 0.6;
 
 export interface PoseOverlayHandle {
-  /** Vẽ trực tiếp lên canvas (không kích hoạt React re-render mỗi frame). */
   draw: (landmarks: readonly Landmark[] | null) => void;
-  /** Xóa sạch khung xương trên canvas. */
   clear: () => void;
 }
 
 export interface PoseOverlayProps {
-  /** Kích thước thật video.videoWidth từ webcam. */
   width: number;
-  /** Kích thước thật video.videoHeight từ webcam. */
   height: number;
-  /** Phải trùng với prop mirrored của CameraView để xương khớp chính xác cơ thể. */
   mirrored?: boolean;
 }
 
 /**
- * Canvas trong suốt phủ đúng kích thước video.
- * Gộp đường vẽ xương và điểm khớp thành tối đa 3 lượt vẽ (stroke/fill) mỗi frame
- * và vẽ trực tiếp qua ref để React không phải render lại 30 lần/giây.
+ * Canvas trong suốt phủ đúng kích thước video, vẽ khung xương trực tiếp qua ref
+ * để không gây re-render React mỗi frame.
  */
 export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
   function PoseOverlay({ width, height, mirrored = true }, ref) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-    // Lấy sẵn context 2D một lần khi canvas gắn vào DOM
     useEffect(() => {
       const canvas = canvasRef.current;
       ctxRef.current = canvas ? canvas.getContext('2d') : null;
@@ -88,10 +75,9 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
           ctx.clearRect(0, 0, w, h);
           if (!landmarks || landmarks.length === 0) return;
 
-          // Tự điều chỉnh nét vẽ hài hòa cho cả 640x480 lẫn 1280x720
           const scale = Math.max(1, w / 640);
 
-          // 1. Gộp toàn bộ đường xương vào đúng 1 lệnh stroke()
+          // 1. Vẽ toàn bộ đường nối xương trong 1 lượt stroke()
           ctx.lineWidth = 2.5 * scale;
           ctx.lineCap = 'round';
           ctx.strokeStyle = '#34d399';
@@ -113,7 +99,7 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
           }
           ctx.stroke();
 
-          // 2. Gộp toàn bộ khớp rõ (visibility >= 0.6) vào 1 đường path màu xanh
+          // 2. Vẽ khớp rõ (visibility >= 0.6) màu xanh
           const dotRadius = 4 * scale;
           ctx.lineWidth = 1.5 * scale;
           ctx.strokeStyle = '#020617';
@@ -136,7 +122,7 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
           ctx.fill();
           ctx.stroke();
 
-          // 3. Nếu có khớp mờ (0.5..0.6), gộp hết vào 1 đường path màu vàng
+          // 3. Vẽ khớp hơi mờ (0.5..0.6) màu vàng
           if (hasAmber) {
             ctx.fillStyle = '#fbbf24';
             ctx.beginPath();
@@ -167,7 +153,6 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
         width={width}
         height={height}
         aria-hidden="true"
-        // Kích thước CSS, object-contain và lật ngang khớp tuyệt đối với <video> trong CameraView
         className={`pointer-events-none absolute inset-0 h-full w-full object-contain ${
           mirrored ? '-scale-x-100' : ''
         }`}

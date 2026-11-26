@@ -6,11 +6,11 @@ import type { PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Frame, Landmark } from '@/lib/pose-engine';
 import { i18n } from '@/lib/i18n';
 
-// Đường dẫn nội bộ trong thư mục public/ (không tải từ bên ngoài)
+// Đường dẫn nội bộ trong thư mục public/ (không tải từ mạng ngoài)
 const LOCAL_WASM_DIR = '/wasm';
 const LOCAL_MODEL_PATH = '/models/pose_landmarker_lite.task';
 
-// Danh sách các file local bắt buộc phải tồn tại trong public/
+// Danh sách file local bắt buộc phải có trong public/
 const REQUIRED_LOCAL_ASSETS = [
   '/wasm/vision_wasm_internal.js',
   '/wasm/vision_wasm_internal.wasm',
@@ -19,14 +19,14 @@ const REQUIRED_LOCAL_ASSETS = [
   LOCAL_MODEL_PATH,
 ] as const;
 
-// Số điểm khớp cố định của MediaPipe Pose
 const POSE_LANDMARK_COUNT = 33;
+// Mảng rỗng dùng chung để không cấp phát lại khi khung hình không có người
+const EMPTY_LANDMARKS: Landmark[] = [];
 
-// Giới hạn tốc độ tối đa ~30 FPS khi gặp webcam 60Hz, nhưng dùng ngưỡng 28ms
-// để không vô tình bỏ lỡ khung hình từ webcam 30Hz (vốn dao động tự nhiên 31–34ms).
+// Ngưỡng ~28ms giữ ổn định 30 FPS trên webcam 30Hz và bảo đảm dt đủ lớn cho phép tính tốc độ
 const MIN_DETECT_INTERVAL_MS = 28;
 
-// Cấu hình tính FPS trung bình trượt trong cửa sổ 1 giây, cập nhật UI mỗi ~500ms
+// Tính FPS trung bình trượt 1 giây, cập nhật UI mỗi ~500ms
 const FPS_WINDOW_MS = 1000;
 const FPS_UI_UPDATE_MS = 500;
 const TS_BUFFER_SIZE = 128;
@@ -35,39 +35,30 @@ export type ModelStatus = 'loading' | 'ready' | 'error';
 export type ComputeDelegate = 'GPU' | 'CPU';
 
 export interface UsePoseLandmarkerOptions {
-  /** Ref trỏ tới thẻ <video> đang phát webcam nội bộ. */
+  /** Ref trỏ tới thẻ <video> đang phát webcam cục bộ. */
   videoRef: RefObject<HTMLVideoElement | null>;
   /** Chỉ chạy vòng lặp nhận diện khi camera đã sẵn sàng. */
   enabled: boolean;
   /**
-   * Callback nhận 33 điểm khớp trực tiếp mỗi frame (dùng chung bộ đệm tái sử dụng,
-   * chỉ đọc ngay trong callback để vẽ canvas mà không gây React re-render).
+   * Callback nhận bộ đệm 33 khớp tái sử dụng để vẽ canvas trực tiếp (0 cấp phát).
    */
   onPose?: (landmarks: readonly Landmark[] | null) => void;
   /**
-   * Callback tùy chọn phát Frame cho pose-engine.ts (dùng ở F3/F4).
-   * Chỉ cấp phát bản sao khi callback này được truyền vào.
+   * Callback nhận Frame chuẩn (timestamp tính bằng ms) cho RepCounter của pose-engine.ts.
    */
   onFrame?: (frame: Frame) => void;
 }
 
 export interface UsePoseLandmarkerResult {
   status: ModelStatus;
-  /** Thông báo lỗi tiếng Việt dễ hiểu cho người dùng. */
   error: string | null;
-  /** Chuỗi lỗi kỹ thuật gốc để tiện kiểm tra / báo lỗi. */
   errorDetail: string | null;
-  /** Delegate đang chạy thực tế: GPU hoặc CPU. */
   delegate: ComputeDelegate | null;
-  /** FPS nhận diện tính theo trung bình trượt 1 giây (cập nhật UI mỗi ~500ms). */
   detectionFps: number;
-  /** True khi đang phát hiện người trong khung hình (chỉ re-render khi đổi trạng thái). */
   hasPose: boolean;
-  /** Thử khởi tạo lại mô hình khi gặp lỗi. */
   retry: () => void;
 }
 
-/** Rút gọn đối tượng lỗi thành chuỗi gọn gàng để hiển thị dòng lỗi gốc. */
 function formatError(err: unknown): string {
   if (err instanceof Error) {
     return err.name && err.name !== 'Error'
@@ -82,10 +73,6 @@ function formatError(err: unknown): string {
   }
 }
 
-/**
- * Kiểm tra trước các file WASM và model trong public/ để phân biệt rõ
- * lỗi thiếu/không tải được file với lỗi khởi tạo GPU/CPU.
- */
 async function verifyLocalAssets(): Promise<void> {
   for (const assetUrl of REQUIRED_LOCAL_ASSETS) {
     const response = await fetch(assetUrl, {
@@ -101,8 +88,8 @@ async function verifyLocalAssets(): Promise<void> {
 
 /**
  * Khởi tạo MediaPipe PoseLandmarker hoàn toàn từ file local (/wasm và /models),
- * thử GPU trước rồi tự động chuyển sang CPU nếu GPU lỗi, và chạy vòng lặp
- * detectForVideo() trong requestAnimationFrame tối ưu hiệu năng (zero-allocation).
+ * thử GPU trước rồi tự động chuyển sang CPU nếu GPU lỗi, và chạy detectForVideo()
+ * trong requestAnimationFrame tối ưu hiệu năng.
  */
 export function usePoseLandmarker({
   videoRef,
@@ -118,10 +105,9 @@ export function usePoseLandmarker({
   const [hasPose, setHasPose] = useState<boolean>(false);
   const [reloadCount, setReloadCount] = useState<number>(0);
 
-  // Giữ instance PoseLandmarker trong ref để chỉ khởi tạo đúng 1 lần
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
 
-  // Cấp phát sẵn đúng 1 lần bộ đệm 33 khớp để ghi đè mỗi frame (không tạo object mới mỗi frame)
+  // Bộ đệm 33 điểm tái sử dụng để vẽ canvas không cấp phát object mỗi frame
   const landmarkPoolRef = useRef<Landmark[] | null>(null);
   if (landmarkPoolRef.current === null) {
     landmarkPoolRef.current = Array.from({ length: POSE_LANDMARK_COUNT }, () => ({
@@ -132,7 +118,6 @@ export function usePoseLandmarker({
     }));
   }
 
-  // Luôn đọc callback mới nhất từ ref để không làm khởi động lại vòng lặp
   const onPoseRef = useRef(onPose);
   useEffect(() => {
     onPoseRef.current = onPose;
@@ -147,7 +132,7 @@ export function usePoseLandmarker({
     setReloadCount((n) => n + 1);
   }, []);
 
-  // 1. Chỉ khởi tạo một lần phía client trong useEffect (hoặc khi bấm "Thử lại")
+  // 1. Khởi tạo MediaPipe đúng 1 lần phía client từ /wasm và /models
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -159,7 +144,6 @@ export function usePoseLandmarker({
       setErrorDetail(null);
       setDelegate(null);
 
-      // Bước 1: Xác minh các file WASM và model nội bộ đều tải được
       try {
         await verifyLocalAssets();
       } catch (assetErr) {
@@ -175,7 +159,6 @@ export function usePoseLandmarker({
         return;
       }
 
-      // Bước 2: Import động thư viện MediaPipe (chỉ chạy phía trình duyệt) và tạo FilesetResolver
       let PoseLandmarkerClass: typeof import('@mediapipe/tasks-vision').PoseLandmarker;
       let vision: Awaited<
         ReturnType<
@@ -212,7 +195,6 @@ export function usePoseLandmarker({
           numPoses: 1,
         });
 
-      // Bước 3: Thử delegate GPU trước; nếu lỗi thì ghi console.error và thử lại với CPU
       let instance: PoseLandmarker | null = null;
       let activeDelegate: ComputeDelegate = 'GPU';
       let gpuErr: unknown = null;
@@ -257,7 +239,6 @@ export function usePoseLandmarker({
         }
       }
 
-      // Nếu người dùng đã rời trang trong lúc đang tải, đóng ngay để tránh rò rỉ bộ nhớ
       if (cancelled) {
         instance.close();
         return;
@@ -270,7 +251,6 @@ export function usePoseLandmarker({
 
     initLandmarker();
 
-    // Dọn dẹp khi rời trang: giải phóng landmarker hoàn toàn
     return () => {
       cancelled = true;
       landmarkerRef.current?.close();
@@ -278,7 +258,7 @@ export function usePoseLandmarker({
     };
   }, [reloadCount]);
 
-  // 2. Vòng lặp nhận diện tư thế bằng requestAnimationFrame
+  // 2. Vòng lặp requestAnimationFrame: bỏ qua frame trùng, đẩy pose ra canvas & RepCounter
   useEffect(() => {
     if (status !== 'ready' || !enabled) {
       setHasPose(false);
@@ -290,11 +270,9 @@ export function usePoseLandmarker({
     const pool = landmarkPoolRef.current!;
     let rafId = 0;
     let lastVideoTime = -1;
-    let lastDetectAt = 0;
     let lastTimestampMs = -1;
     let lastHasPose = false;
 
-    // Ring buffer cố định để tính FPS trung bình trượt 1 giây (không tạo mảng mới)
     const tsBuffer = new Float64Array(TS_BUFFER_SIZE);
     let tsHead = 0;
     let tsCount = 0;
@@ -309,9 +287,10 @@ export function usePoseLandmarker({
       const landmarker = landmarkerRef.current;
       if (!video || !landmarker) return;
 
+      // Mốc thời gian thực bằng mili-giây (ms) theo chuẩn Frame.t của pose-engine.ts
       const now = performance.now();
 
-      // Cập nhật FPS lên UI mỗi ~500ms theo trung bình trượt 1 giây
+      // Cập nhật FPS trung bình trượt 1 giây lên UI mỗi ~500ms
       if (now - lastFpsUiUpdate >= FPS_UI_UPDATE_MS) {
         while (tsCount > 0 && now - tsBuffer[tsHead] > FPS_WINDOW_MS) {
           tsHead = (tsHead + 1) % TS_BUFFER_SIZE;
@@ -334,7 +313,6 @@ export function usePoseLandmarker({
         lastFpsUiUpdate = now;
       }
 
-      // Chờ thẻ video có dữ liệu hình ảnh và kích thước thật
       if (
         video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
         video.videoWidth === 0 ||
@@ -343,28 +321,25 @@ export function usePoseLandmarker({
         return;
       }
 
-      // Chỉ gọi detectForVideo khi video.currentTime thay đổi so với lần trước (bỏ qua frame trùng)
+      // Chỉ gọi detectForVideo khi video.currentTime thay đổi
       const currentVideoTime = video.currentTime;
       if (currentVideoTime === lastVideoTime) return;
 
-      // Ngăn quá tải trên webcam 60Hz mà không làm rớt nhịp webcam 30Hz
-      if (now - lastDetectAt < MIN_DETECT_INTERVAL_MS) return;
+      // Bảo đảm timestamp (ms) luôn tăng thực tế tối thiểu MIN_DETECT_INTERVAL_MS (tránh dt siêu nhỏ gây TELEPORT giả)
+      if (lastTimestampMs >= 0 && now - lastTimestampMs < MIN_DETECT_INTERVAL_MS) {
+        return;
+      }
 
       lastVideoTime = currentVideoTime;
-      lastDetectAt = now;
-
-      // Chế độ VIDEO của MediaPipe yêu cầu timestamp luôn tăng dần
-      const timestampMs = now > lastTimestampMs ? now : lastTimestampMs + 0.01;
-      lastTimestampMs = timestampMs;
+      lastTimestampMs = now;
 
       try {
-        const result = landmarker.detectForVideo(video, timestampMs);
+        const result = landmarker.detectForVideo(video, now);
         const firstPose = result.landmarks[0];
         const detected = Boolean(
           firstPose && firstPose.length >= POSE_LANDMARK_COUNT
         );
 
-        // Ghi mốc thời gian vào ring buffer để tính FPS trung bình trượt 1 giây
         if (firstDetectAt === 0) firstDetectAt = now;
         const writeIdx = (tsHead + tsCount) % TS_BUFFER_SIZE;
         tsBuffer[writeIdx] = now;
@@ -374,8 +349,9 @@ export function usePoseLandmarker({
           tsHead = (tsHead + 1) % TS_BUFFER_SIZE;
         }
 
+        const aspect = video.videoWidth / video.videoHeight;
+
         if (detected && firstPose) {
-          // Ghi đè trực tiếp vào bộ đệm 33 khớp sẵn có (không tạo object mới mỗi frame)
           for (let i = 0; i < POSE_LANDMARK_COUNT; i++) {
             const src = firstPose[i];
             const dst = pool[i];
@@ -392,23 +368,19 @@ export function usePoseLandmarker({
             setHasPose(true);
           }
 
-          // Chỉ sao chép Frame khi có caller truyền onFrame (dùng ở F3/F4)
           if (onFrameRef.current) {
-            const snapshot: Landmark[] = new Array(POSE_LANDMARK_COUNT);
+            // Tạo bản sao gọn nhẹ để RepCounter.peakFrame không bị ghi đè bởi frame sau
+            const lmSnapshot: Landmark[] = new Array(POSE_LANDMARK_COUNT);
             for (let i = 0; i < POSE_LANDMARK_COUNT; i++) {
               const p = pool[i];
-              snapshot[i] = {
+              lmSnapshot[i] = {
                 x: p.x,
                 y: p.y,
                 z: p.z,
                 visibility: p.visibility,
               };
             }
-            onFrameRef.current({
-              t: timestampMs,
-              aspect: video.videoWidth / video.videoHeight,
-              lm: snapshot,
-            });
+            onFrameRef.current({ t: now, aspect, lm: lmSnapshot });
           }
         } else {
           if (lastHasPose) {
@@ -418,11 +390,7 @@ export function usePoseLandmarker({
           }
 
           if (onFrameRef.current) {
-            onFrameRef.current({
-              t: timestampMs,
-              aspect: video.videoWidth / video.videoHeight,
-              lm: [],
-            });
+            onFrameRef.current({ t: now, aspect, lm: EMPTY_LANDMARKS });
           }
         }
       } catch (err) {
@@ -432,7 +400,6 @@ export function usePoseLandmarker({
 
     rafId = requestAnimationFrame(tick);
 
-    // Hủy requestAnimationFrame và xóa khung xương khi dừng hoặc rời trang
     return () => {
       cancelAnimationFrame(rafId);
       onPoseRef.current?.(null);
