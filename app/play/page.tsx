@@ -21,6 +21,7 @@ import { LANDMARK_FILTER_CONFIG } from '@/lib/pose/landmarkFilter';
 import { MIRROR_HAND_MAPPING } from '@/lib/pose/liveness';
 import { getAllowedExercises, type PostureMode } from '@/lib/game/engineAdapter';
 import { FX_CONFIG } from '@/lib/game/cosmetics';
+import { CALIBRATION_MODE } from '@/lib/game/calibration';
 import { unlockGameAudio } from '@/lib/game/sound';
 import { useGameStore } from '@/lib/game/store';
 import type { ExerciseId, Frame, Landmark } from '@/lib/pose-engine';
@@ -39,11 +40,9 @@ const HINT_CARD_STYLES: Record<ProgressTone, string> = {
 };
 
 /**
- * Trang chơi chính ("/play") — Hoàn thiện Task F8:
- * - Công tắc "Đứng / Ngồi" trước mỗi lượt (đồng bộ Zustand RAM).
- * - Chế độ Ngồi ẩn Squat & Nâng gối, chỉ vẽ khung xương thân trên, hướng dẫn đặt webcam 60–80cm.
- * - Màn hướng dẫn nhanh tự mở lần đầu vào /play và mở lại từ nút "?".
- * - Khung "Quyền riêng tư" và nút "Tắt camera" / "Bật camera" rõ ràng.
+ * Trang chơi chính ("/play"):
+ * - Giữ nguyên toàn bộ F1–F5, F7, F8.
+ * - F6a: bổ sung đường dẫn nhỏ sang "/calibrate" trong bảng Debug khi `CALIBRATION_MODE === true`.
  */
 export default function PlayPage() {
   const displayName = useGameStore((state) => state.displayName);
@@ -72,14 +71,12 @@ export default function PlayPage() {
   const allowedExercises = getAllowedExercises(postureMode);
   const isSeated = postureMode === 'seated';
 
-  // Đảm bảo ở chế độ Ngồi không bao giờ chọn nhầm squat hoặc high_knees
   useEffect(() => {
     if (!allowedExercises.includes(selectedExercise)) {
       setSelectedExercise(allowedExercises[0]);
     }
   }, [allowedExercises, selectedExercise]);
 
-  // Tự mở màn hướng dẫn nhanh ở lần đầu vào /play (chỉ trong RAM)
   useEffect(() => {
     if (!hasSeenGuide) {
       setGuideOpen(true);
@@ -279,7 +276,6 @@ export default function PlayPage() {
       )}
 
       <div className="mx-auto max-w-6xl space-y-4">
-        {/* Thanh tiêu đề: Tab chế độ, công tắc Đứng/Ngồi, Tắt/Bật camera, Âm thanh, ?, Quyền riêng tư, Debug */}
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 sm:px-5">
           <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
             <div>
@@ -294,7 +290,6 @@ export default function PlayPage() {
               </p>
             </div>
 
-            {/* Chuyển tab Dungeon Run / Chế độ luyện tập */}
             <div className="inline-flex rounded-xl border border-slate-800 bg-slate-950 p-1">
               <button
                 type="button"
@@ -320,7 +315,6 @@ export default function PlayPage() {
               </button>
             </div>
 
-            {/* Công tắc Đứng / Ngồi trước mỗi lượt */}
             <div
               className="inline-flex rounded-xl border border-slate-800 bg-slate-950 p-1"
               aria-label={i18n.posture.label}
@@ -361,7 +355,6 @@ export default function PlayPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Nút Tắt / Bật camera rõ ràng */}
             {!isShowingSummary && (
               <button
                 type="button"
@@ -392,7 +385,6 @@ export default function PlayPage() {
                 : i18n.dungeon.sound.offLabel}
             </button>
 
-            {/* Nút "?" mở lại màn hướng dẫn bất cứ lúc nào */}
             <button
               type="button"
               onClick={() => setGuideOpen(true)}
@@ -403,7 +395,6 @@ export default function PlayPage() {
               ?
             </button>
 
-            {/* Nút mở khung Quyền riêng tư */}
             <button
               type="button"
               onClick={() => setPrivacyOpen(true)}
@@ -437,7 +428,6 @@ export default function PlayPage() {
           </div>
         </header>
 
-        {/* Banner mẹo đặt webcam riêng khi đang bật chế độ Ngồi */}
         {isSeated && !isShowingSummary && (
           <div className="rounded-2xl border border-sky-500/40 bg-sky-950/40 px-4 py-2.5 text-xs font-medium text-sky-100 sm:text-sm">
             🪑 <strong>{i18n.posture.seatedBadge}:</strong>{' '}
@@ -445,7 +435,7 @@ export default function PlayPage() {
           </div>
         )}
 
-        {/* Thanh Debug Dungeon */}
+        {/* Thanh Debug Dungeon (có link nhỏ sang /calibrate khi CALIBRATION_MODE = true) */}
         {SHOW_DEBUG_TOOLS && debugOpen && mode === 'dungeon' && (
           <section className="rounded-2xl border border-sky-500/40 bg-slate-900/95 p-4 font-mono text-xs text-slate-200">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -458,6 +448,14 @@ export default function PlayPage() {
                     ? dungeonDebugTexts.sampleRunTag
                     : dungeonDebugTexts.normalRunTag}
                 </span>
+                {CALIBRATION_MODE && (
+                  <Link
+                    href="/calibrate"
+                    className="rounded-lg border border-sky-400/50 bg-sky-500/15 px-2.5 py-1 font-sans text-[11px] font-bold text-sky-200 transition hover:bg-sky-500/25"
+                  >
+                    🧪 {debugTexts.calibrateLink}
+                  </Link>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -872,7 +870,6 @@ export default function PlayPage() {
               </div>
             </section>
 
-            {/* Chọn động tác luyện tập (tự ẩn Squat & Nâng gối khi ở chế độ Ngồi) */}
             <section
               aria-label={i18n.play.practice.chooseExerciseLabel}
               className="rounded-2xl border border-slate-800 bg-slate-900 p-4"
@@ -1167,6 +1164,7 @@ export default function PlayPage() {
                   )}
                 </div>
 
+                {/* Bảng Debug F4 + F3 (bổ sung link nhỏ sang /calibrate khi CALIBRATION_MODE = true) */}
                 {SHOW_DEBUG_TOOLS && debugOpen && (
                   <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950/90 p-4 font-mono text-xs text-slate-300">
                     <div className="flex items-center justify-between gap-2">
@@ -1180,6 +1178,15 @@ export default function PlayPage() {
                           : debugTexts.filterOff}
                       </span>
                     </div>
+
+                    {CALIBRATION_MODE && (
+                      <Link
+                        href="/calibrate"
+                        className="block rounded-xl border border-sky-400/50 bg-sky-500/15 px-3 py-2 text-center font-sans text-xs font-bold text-sky-200 transition hover:bg-sky-500/25"
+                      >
+                        🧪 {debugTexts.calibrateLink}
+                      </Link>
+                    )}
 
                     <div className="space-y-1.5 border-t border-slate-800 pt-2.5">
                       <p className="font-sans text-[11px] font-semibold text-slate-400">
@@ -1305,10 +1312,7 @@ export default function PlayPage() {
         )}
       </div>
 
-      {/* Modal Hướng dẫn nhanh (tự mở lần đầu vào /play và mở lại từ nút "?") */}
       {guideOpen && <GuideModal onClose={handleCloseGuide} />}
-
-      {/* Modal Quyền riêng tư */}
       {privacyOpen && <PrivacyModal onClose={() => setPrivacyOpen(false)} />}
     </main>
   );

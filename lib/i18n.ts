@@ -6,10 +6,10 @@ import type {
   Verdict,
 } from '@/lib/pose-engine';
 import type { CosmeticItemId, CosmeticSlot } from '@/lib/game/cosmetics';
+import type { TrialType } from '@/lib/game/calibration';
 
 /**
- * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1–F5, F7, F8).
- * Bổ sung bảng tên khớp (`landmarkNames`) để báo cụ thể khớp đang thiếu khi LOW_VISIBILITY.
+ * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1–F5, F7, F8 và Công cụ hiệu chỉnh F6a).
  */
 export const i18n = {
   app: {
@@ -408,6 +408,7 @@ export const i18n = {
       debug: {
         toggleShowButton: 'Hiện Debug',
         toggleHideButton: 'Ẩn Debug',
+        calibrateLink: 'Mở công cụ hiệu chỉnh (/calibrate)',
         title: 'Debug F4 (Khung hình, Lịch thử thách & Góc)',
         f4SectionTitle: 'Lớp 0 & Lớp 3b (F4)',
         seedLabel: 'Seed lượt tập',
@@ -805,5 +806,140 @@ export const i18n = {
 
     honestDisclaimer:
       'Bản prototype: bảng xếp hạng chạy trên trình duyệt, không có máy chủ nên không chống gian lận tuyệt đối.',
+  },
+
+  // ── F6a: Công cụ hiệu chỉnh (/calibrate) ──
+  calibration: {
+    title: 'Công cụ hiệu chỉnh (F6a)',
+    subtitle: 'Thu thập số liệu thực tế (Đứng/Ngồi & thử gian lận) trong RAM — không đổi ngưỡng engine.',
+    disabledTitle: 'Chế độ hiệu chỉnh đang tắt',
+    disabledDesc:
+      'Đặt CALIBRATION_MODE = true trong lib/game/calibration.ts để mở trang thu thập số liệu hiệu chỉnh.',
+    backToPlay: 'Về phòng tập (/play)',
+    backHome: 'Trang chủ',
+    defaultTester: 'NguoiThu_01',
+    versionLabel: 'Phiên bản ngưỡng:',
+    testerLabel: 'Người thử (tên / nhãn)',
+    testerPlaceholder: 'Ví dụ: Long_IT2, Ban_A...',
+    activeTrialLabel: 'Kiểu thử đang gắn nhãn',
+    startCheatButton: 'Bắt đầu thử gian lận',
+    backToRealButton: 'Chuyển về tập thật',
+    cheatPickerTitle: 'Chọn kiểu thử gian lận (tự tạo phiên mới & gắn nhãn mọi rep tiếp theo)',
+    finalizeSessionButton: 'Kết thúc phiên & gọi finalizeRun',
+    newSessionButton: 'Tạo phiên đo mới',
+    copyCsvButton: 'Sao chép số liệu (CSV)',
+    clearLogsButton: 'Xoá nhật ký',
+    copySuccess: 'Đã sao chép toàn bộ nhật ký CSV vào clipboard!',
+    copyError:
+      'Không sao chép được tự động vào clipboard. Hãy kiểm tra quyền trình duyệt rồi thử lại.',
+
+    trialTypes: {
+      real: 'Tập thật',
+      photo: 'Giơ ảnh',
+      video: 'Phát video',
+      fast: 'Tập nhanh',
+      half: 'Nửa vời',
+      still: 'Đứng yên',
+    } satisfies Record<TrialType, string>,
+
+    telemetry: {
+      title: 'Thông số thời gian thực (~100ms)',
+      metricAngleLabel: 'Giá trị đo chính (góc °)',
+      metricRatioLabel: 'Giá trị đo chính (tỷ lệ)',
+      thresholdLabel: 'Ngưỡng rest → peak',
+      holdLabel: 'Thời gian đã giữ / Yêu cầu',
+      notHoldExercise: 'Động tác động (0s)',
+      repTimeBoundsLabel: 'Thời lượng rep (min–max)',
+      velocityLabel: 'Tốc độ hiện tại / Ngưỡng TELEPORT',
+      fpsDelegateLabel: 'FPS / Bộ xử lý AI',
+      qualityGateLabel: 'Kết quả qualityGate (engine)',
+      frameCheckLabel: 'Kiểm tra khung hình (Lớp 0)',
+      reasonLabel: 'Trạng thái / Lý do chưa tính rep',
+      sessionCounterLabel: 'Phiên đang đo',
+      gateOk: 'ĐẠT (OK)',
+      gateBlockedPrefix: 'Chặn bởi qualityGate:',
+      waitingCamera: 'Đang chờ camera và AI sẵn sàng...',
+      atRestReady: 'Đang ở tư thế nghỉ — sẵn sàng bắt đầu rep.',
+      belowPeakThreshold: 'Đang vào động tác, chưa chạm ngưỡng peak',
+      reachedPeakReturnRest: 'Đã đạt peak — trở về tư thế nghỉ để chốt rep.',
+      holdingInProgress: 'Đang giữ liên tục',
+      needRestToArm: 'Chưa mở khóa rep giữ — hãy về tư thế nghỉ 1 nhịp trước.',
+      awaitingRest: 'Đã chốt rep giữ — thả lỏng về tư thế nghỉ để mở rep tiếp.',
+      repCountedOk: 'Rep vừa xong ĐÃ TÍNH (không cờ lỗi).',
+      repCountedWithFlagsPrefix: 'Rep vừa xong ĐÃ TÍNH nhưng có cờ:',
+      repRejectedPrefix: 'Rep vừa xong KHÔNG TÍNH:',
+    },
+
+    repLog: {
+      title: 'Nhật ký Rep (RAM)',
+      empty: 'Chưa ghi nhận rep nào. Thực hiện động tác trước camera để tự ghi.',
+      cols: {
+        index: '#',
+        session: 'Phiên',
+        tester: 'Người thử',
+        trial: 'Kiểu thử',
+        exercise: 'Động tác',
+        posture: 'Chế độ',
+        counted: 'Tính?',
+        peakMetric: 'Đỉnh đo',
+        duration: 'Thời lượng',
+        quality: 'Chất lượng',
+        flags: 'Flags',
+      },
+      yes: 'Đạt',
+      no: 'Loại',
+    },
+
+    sessionLog: {
+      title: 'Nhật ký Phiên — finalizeRun() (RAM)',
+      empty:
+        'Chưa có phiên nào. Sau mỗi lượt thử, bấm "Kết thúc phiên & gọi finalizeRun" để ghi kết quả.',
+      cols: {
+        session: 'Phiên',
+        tester: 'Người thử',
+        trial: 'Kiểu thử',
+        exercise: 'Động tác',
+        reps: 'Đạt/Tổng',
+        verdict: 'Verdict',
+        analyze: 'analyzeReps (score / flags)',
+        reasons: 'Reasons (finalizeRun)',
+        xp: 'XP',
+      },
+    },
+
+    guide: {
+      title: 'Hướng dẫn nhanh cho người thử hiệu chỉnh',
+      distanceStanding:
+        'Chế độ Đứng: đứng cách webcam 1,5–2m, đủ ánh sáng, thấy rõ vai–hông–gối (Nâng gối cần thấy cả cổ chân).',
+      distanceSeated:
+        'Chế độ Ngồi: đặt webcam ngang tầm ngực–vai, ngồi cách 60–80cm, thấy rõ mặt, hai vai và hai tay khi vươn lên.',
+      scenariosTitle: 'Cách thực hiện từng kiểu thử:',
+      scenarios: [
+        {
+          type: 'real' as TrialType,
+          desc: 'Tập đúng tư thế 5–8 rep với tốc độ tự nhiên (giữ đủ 1,5s hoặc 2s cho bài giữ), sau đó bấm "Kết thúc phiên & gọi finalizeRun".',
+        },
+        {
+          type: 'photo' as TrialType,
+          desc: 'Giơ ảnh in hoặc màn hình điện thoại có ảnh người trước webcam khoảng 8–10 giây để kiểm tra cờ STATIC_SUBJECT.',
+        },
+        {
+          type: 'video' as TrialType,
+          desc: 'Mở 1 đoạn video tập lặp lại nhiều lần (≥ 5 rep) trước webcam để kiểm tra cờ LOOPED_MOTION và UNIFORM_TEMPO.',
+        },
+        {
+          type: 'fast' as TrialType,
+          desc: 'Thực hiện động tác thật nhanh (nhấp nhô liên tục < 1s) để kiểm tra cờ TOO_FAST / TELEPORT / JITTER.',
+        },
+        {
+          type: 'half' as TrialType,
+          desc: 'Chỉ thực hiện nửa biên độ (squat nông, nghiêng nhẹ chưa tới ngưỡng hoặc giữ chưa đủ thời gian) để kiểm tra NOT_DEEP_ENOUGH / HOLD_TOO_SHORT.',
+        },
+        {
+          type: 'still' as TrialType,
+          desc: 'Đứng hoặc ngồi hoàn toàn bất động trước webcam khoảng 10 giây rồi kết thúc phiên để kiểm tra không đếm rep giả và cờ STATIC_SUBJECT.',
+        },
+      ],
+    },
   },
 } as const;
