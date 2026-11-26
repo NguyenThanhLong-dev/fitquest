@@ -1,8 +1,9 @@
-import type { ExerciseId, GateReason } from '@/lib/pose-engine';
+import type { ChallengeId, ExerciseId, GateReason } from '@/lib/pose-engine';
 
 /**
  * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest.
- * Giữ nguyên toàn bộ khóa F1 + F2 + F3 và bổ sung chuỗi cho quy tắc bài giữ & khung debug góc/giữ.
+ * Giữ nguyên toàn bộ khóa F1 + F2 + F3 và bổ sung đầy đủ chuỗi cho F4
+ * (kiểm tra khung hình lớp 0, thử thách sống lớp 3b, lượt tập thử và debug).
  */
 export const i18n = {
   // ── F1: Metadata toàn cục ──
@@ -24,7 +25,7 @@ export const i18n = {
       'Video không bao giờ rời khỏi máy bạn. Dữ liệu chỉ lưu tạm trong RAM.',
   },
 
-  // ── F1 + F2 + F3: Trang chơi, camera, AI và chế độ luyện tập ──
+  // ── F1 + F2 + F3 + F4: Trang chơi, camera, AI, luyện tập & thử thách sống ──
   play: {
     // Khóa giữ nguyên từ F1
     placeholder: 'Camera sắp có',
@@ -101,7 +102,9 @@ export const i18n = {
         awaitingRest: 'Đã xong rep — hãy thả lỏng về tư thế nghỉ trước khi tập tiếp',
         startFromRest: 'Hãy về tư thế nghỉ trước khi bắt đầu giữ',
         repCancelledTitle: 'Rep đang tập đã bị hủy',
-        poseLostTitle: 'Tạm dừng đếm (mất tư thế / thiếu khớp)',
+        poseLostTitle: 'Tạm dừng đếm (khung hình chưa đạt)',
+        challengePaused: 'Đang tạm dừng đếm rep để thực hiện thử thách sống...',
+        runEnded: 'Lượt tập thử đã kết thúc. Bấm "Bắt đầu lượt tập thử" để tập lượt mới.',
         countedGood: 'Rep chuẩn! Tiếp tục giữ nhịp',
         countedWithNotePrefix: 'Đã tính rep — lưu ý:',
         rejectedPrefix: 'Chưa tính rep:',
@@ -112,10 +115,10 @@ export const i18n = {
       gateReasons: {
         NO_POSE: 'Không thấy người trong khung hình. Hãy đứng hoặc ngồi vào trước camera.',
         LOW_VISIBILITY:
-          'Thiếu khớp hoặc ánh sáng yếu. Hãy bật thêm đèn và để lộ đủ khớp cần thiết.',
+          'Thiếu khớp bắt buộc hoặc ánh sáng yếu. Hãy bật thêm đèn và để lộ rõ đủ khớp cần thiết.',
         OUT_OF_FRAME:
-          'Cơ thể bị cắt khỏi khung hình. Hãy đứng lùi ra xa camera.',
-        TOO_FAR: 'Bạn đang đứng quá xa camera. Hãy tiến lại gần hơn.',
+          'Khớp bắt buộc đang sát mép hoặc ra ngoài khung hình. Hãy căn lại vị trí ở giữa camera.',
+        TOO_FAR: 'Bạn đang đứng quá xa camera (thân quá nhỏ). Hãy tiến lại gần hơn.',
       } satisfies Record<GateReason, string>,
 
       // Thông tin & gợi ý riêng cho từng động tác trong EXERCISES
@@ -199,9 +202,78 @@ export const i18n = {
         FORM_SHOULDERS_LEVEL: 'Giữ vai tương đối ngang',
       } as Record<string, string>,
 
-      // Khung debug góc, thời gian giữ, tốc độ & lý do từ chối gần nhất
+      // ── F4: Kiểm tra khung hình (Lớp 0) & Thử thách sống (Lớp 3b) ──
+      frameCheck: {
+        title: 'Kiểm tra khung hình',
+        readyBadge: 'Sẵn sàng',
+        notReadyBadge: 'Chưa đạt',
+        stabilizingBadge: 'Đang ổn định...',
+        readyMessage: 'Khung hình đạt chuẩn — có thể bắt đầu đếm rep.',
+        reasons: {
+          NO_POSE: 'Không thấy người trong khung hình. Hãy ngồi hoặc đứng vào trước camera.',
+          LOW_VISIBILITY:
+            'Thiếu khớp bắt buộc (độ tin cậy < 0,6). Hãy bật thêm đèn và để lộ rõ các khớp cần kiểm tra.',
+          OUT_OF_FRAME:
+            'Khớp bắt buộc đang sát mép hoặc ra ngoài khung hình. Hãy căn lại vị trí ở giữa khung.',
+          TOO_FAR:
+            'Bạn đang đứng quá xa camera (thân quá nhỏ trong khung). Hãy tiến lại gần hơn.',
+          TOO_CLOSE:
+            'Bạn đang đứng quá gần camera. Hãy lùi ra xa một chút để thấy rõ cơ thể.',
+        },
+      },
+
+      liveness: {
+        runTitle: 'Lượt tập thử (Run)',
+        runActiveBadge: 'Đang trong lượt',
+        runEndedBadge: 'Đã kết thúc lượt',
+        startNewRunButton: 'Bắt đầu lượt tập thử',
+        restartRunButton: 'Lượt tập thử mới',
+        endRunButton: 'Kết thúc lượt',
+        statsLabel: 'Thử thách sống (tạm lưu RAM)',
+        passedLabel: 'Đạt',
+        failedLabel: 'Thất bại',
+        scheduledLabel: 'Theo lịch lượt này',
+        runRepsLabel: 'Rep hợp lệ trong lượt',
+        modalBadge: 'Thử thách sống · Đang tạm dừng đếm rep',
+        prompts: {
+          RAISE_LEFT_HAND: 'Giơ tay trái lên',
+          RAISE_RIGHT_HAND: 'Giơ tay phải lên',
+        } satisfies Record<ChallengeId, string>,
+        holdInstruction: 'Giơ 1 tay cao hơn vai và giữ liên tục 0,5 giây (hạ tay còn lại).',
+        countdownLabel: 'Còn lại',
+        holdBarLabel: 'Giữ tư thế',
+        outcomePassed: 'Vượt qua thử thách sống! Tiếp tục lượt tập.',
+        outcomeFailed: 'Hết giờ thử thách — đã ghi nhận 1 lần thất bại (lượt tập vẫn tiếp tục).',
+        scheduleItemStatuses: {
+          pending: 'Chờ',
+          active: 'Đang chạy',
+          passed: 'Đạt',
+          failed: 'Thất bại',
+        },
+      },
+
+      // Khung debug F3 + F4 (bật/tắt bằng nút Debug)
       debug: {
-        title: 'Debug góc, giữ & bộ lọc (F3)',
+        toggleShowButton: 'Hiện Debug',
+        toggleHideButton: 'Ẩn Debug',
+        title: 'Debug F4 (Khung hình, Lịch thử thách & Góc)',
+        f4SectionTitle: 'Lớp 0 & Lớp 3b (F4)',
+        seedLabel: 'Seed lượt tập',
+        seedFixedTag: 'Cố định',
+        seedRandomTag: 'Ngẫu nhiên',
+        scheduleLabel: 'Lịch thử thách (0–2)',
+        scheduleEmpty: 'Lượt này có 0 thử thách theo seed.',
+        scheduleTriggerPrefix: 'Sau',
+        scheduleRepsUnit: 'rep',
+        frameStatusLabel: 'Khung hình (sau chống nhấp nháy)',
+        frameRawLabel: 'Khung hình thô (tức thời)',
+        frameReasonLabel: 'Lý do chưa đạt',
+        frameReasonNone: 'Không có (đạt)',
+        frameSizeLabel: 'Vai / Thân (tỷ lệ khung)',
+        mirrorMappingLabel: 'Ánh xạ trái/phải gương',
+        mirrorCssOnly: 'CSS gương (L→L, R→R)',
+        mirrorSwapped: 'Đảo giải phẫu (L→R, R→L)',
+        f3SectionTitle: 'Góc, Giữ & Tốc độ (F3)',
         metricAngleLabel: 'Góc hiện tại / Ngưỡng',
         metricRatioLabel: 'Chỉ số hiện tại / Ngưỡng',
         holdTimeLabel: 'Thời gian đã giữ',

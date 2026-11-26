@@ -5,18 +5,18 @@ import { useGameStore } from '@/lib/game/store';
 import { i18n } from '@/lib/i18n';
 
 /**
- * Home page ("/").
- * Uses "use client" because it reads and updates the Zustand hook (useGameStore).
+ * Trang chủ ("/").
+ * Dùng "use client" vì đọc và cập nhật trực tiếp store Zustand (useGameStore).
  */
 export default function HomePage() {
-  // Connect the text input directly to the in-memory Zustand store
+  // Kết nối ô nhập tên trực tiếp với Zustand trong RAM (không lưu localStorage)
   const displayName = useGameStore((state) => state.displayName);
   const setDisplayName = useGameStore((state) => state.setDisplayName);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
       <div className="w-full max-w-md space-y-6 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl">
-        {/* Game title and one-sentence description */}
+        {/* Tiêu đề game và mô tả ngắn */}
         <div className="space-y-2 text-center">
           <h1 className="text-4xl font-extrabold tracking-tight text-emerald-400">
             {i18n.home.title}
@@ -26,7 +26,7 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* Optional display-name field stored in Zustand */}
+        {/* Ô nhập tên hiển thị tùy chọn (lưu trong Zustand) */}
         <div className="space-y-2">
           <label
             htmlFor="display-name"
@@ -45,7 +45,7 @@ export default function HomePage() {
           />
         </div>
 
-        {/* Client-side link to /play so in-memory Zustand state is kept */}
+        {/* Chuyển sang /play mà vẫn giữ trạng thái trong RAM */}
         <Link
           href="/play"
           className="block w-full rounded-xl bg-emerald-500 px-5 py-3 text-center text-base font-semibold text-slate-950 transition hover:bg-emerald-400"

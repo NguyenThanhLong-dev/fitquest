@@ -6,21 +6,34 @@ import {
   EXERCISES,
   LM,
   RepCounter,
+  SessionGuard,
   THRESHOLDS,
   maxVelocity,
   type ExerciseId,
   type Frame,
-  type GateReason,
   type RepResult,
 } from '@/lib/pose-engine';
 import { LandmarkOneEuroFilter } from '@/lib/pose/landmarkFilter';
+import {
+  FrameStabilityGate,
+  evaluateFrameCheck,
+  type FrameCheckReason,
+  type FrameStabilitySnapshot,
+} from '@/lib/pose/frameCheck';
+import {
+  LivenessRunController,
+  createRunSeed,
+  type LivenessRunSnapshot,
+} from '@/lib/pose/liveness';
+import { useGameStore } from '@/lib/game/store';
 import type { ProgressTone } from '@/components/ProgressRing';
 import { i18n } from '@/lib/i18n';
 
-// Chỉ cập nhật React state tối đa mỗi 100ms khi không có sự kiện đổi rep / đổi trạng thái
+// Chỉ đồng bộ React state tối đa mỗi 100ms khi không có sự kiện đổi rep / đổi thử thách / đổi gate
 const UI_SYNC_INTERVAL_MS = 100;
 const POST_REP_FEEDBACK_MS = 2600;
 const CANCELLED_BANNER_MS = 3000;
+const OUTCOME_BANNER_MS = 3500;
 
 type SecondaryAngleKind = 'shoulderTilt' | 'hipTilt' | 'torsoLean';
 
@@ -28,7 +41,6 @@ function deg(rad: number): number {
   return (rad * 180) / Math.PI;
 }
 
-/** Tính góc kiểm tra phụ (độ °) để hiển thị trong bảng debug (khớp công thức pose-engine.ts). */
 function measureSecondaryAngle(
   exerciseId: ExerciseId,
   frame: Frame
@@ -106,41 +118,41 @@ export interface LastRejectionSnapshot {
 }
 
 export interface ExerciseDebugState {
-  /** True nếu bài tập dùng đơn vị góc (°), false nếu dùng tỷ lệ hình học. */
   isAngleExercise: boolean;
-  /** Giá trị góc/chỉ số hiện tại sau EMA từ RepCounter. */
   metricValue: number | null;
   restThreshold: number;
   peakThreshold: number;
-  /** Góc kiểm tra phụ (vai ngang / hông ngang / lưng thẳng) và dung sai tối đa. */
   secondaryKind: SecondaryAngleKind;
   secondaryValueDeg: number | null;
   secondaryMaxDeg: number;
-  /** Thời gian đã giữ liên tục hiện tại (ms) và mục tiêu (ms). */
   currentHoldMs: number;
   targetHoldMs: number;
-  /** Trạng thái máy trạng thái của bộ đếm. */
   phase: 'ready' | 'active' | 'awaitingRest';
-  /** Thông số tốc độ để theo dõi TELEPORT. */
   currentVelocity: number;
   livePeakVelocity: number;
   lastRepPeakVelocity: number | null;
   maxVelocityThreshold: number;
-  /** Lý do từ chối gần nhất. */
   lastRejection: LastRejectionSnapshot | null;
 }
 
 export interface RepCounterUiState {
   exerciseId: ExerciseId;
+  runActive: boolean;
   repCount: number;
+  validRepsInRun: number;
   ringProgress: number;
   movementProgress: number;
   currentHoldMs: number;
   targetHoldMs: number;
   awaitingRest: boolean;
-  gateOk: boolean;
-  gateReason: GateReason | null;
-  cancelledReason: GateReason | null;
+  /** Trạng thái khung hình Lớp 0 đã chống nhấp nháy. */
+  frameCheck: FrameStabilitySnapshot;
+  /** Lý do hủy rep nếu mất tư thế giữa chừng. */
+  cancelledReason: FrameCheckReason | null;
+  /** Trạng thái Thử thách sống Lớp 3b của lượt tập hiện tại. */
+  liveness: LivenessRunSnapshot;
+  /** Banner tạm thời báo vừa đạt/trượt thử thách sống. */
+  recentChallengeOutcome: 'passed' | 'failed' | null;
   lastRep: LastRepSnapshot | null;
   hintText: string;
   hintTone: ProgressTone;
@@ -148,7 +160,9 @@ export interface RepCounterUiState {
 }
 
 interface RuntimeState {
+  runActive: boolean;
   repCount: number;
+  validRepsInRun: number;
   inRep: boolean;
   awaitingRest: boolean;
   progress: number;
@@ -161,10 +175,12 @@ interface RuntimeState {
   currentVelocity: number;
   livePeakVelocity: number;
   currentHoldMs: number;
-  gateOk: boolean;
-  gateReason: GateReason | null;
-  cancelledReason: GateReason | null;
+  frameCheck: FrameStabilitySnapshot;
+  cancelledReason: FrameCheckReason | null;
   cancelledUntil: number;
+  liveness: LivenessRunSnapshot;
+  recentChallengeOutcome: 'passed' | 'failed' | null;
+  recentOutcomeUntil: number;
   lastRep: LastRepSnapshot | null;
   lastRejection: LastRejectionSnapshot | null;
   postRepHint: string | null;
@@ -195,6 +211,35 @@ function getDefaultSecondaryMeta(exerciseId: ExerciseId): {
     case 'high_knees':
       return { kind: 'torsoLean', maxDeg: THRESHOLDS.HIGH_KNEES_TORSO_MAX_DEG };
   }
+}
+
+function createInitialFrameSnapshot(): FrameStabilitySnapshot {
+  return {
+    stableOk: false,
+    stableReason: 'NO_POSE',
+    rawOk: false,
+    rawReason: 'NO_POSE',
+    transitioningTo: null,
+    transitionProgress: 0,
+    shoulderWidthRatio: null,
+    torsoHeightRatio: null,
+  };
+}
+
+/**
+ * Trạng thái cố định cho lần render đầu (SSR và client khớp nhau 100%).
+ * Seed thật sẽ được sinh trong useEffect phía trình duyệt.
+ */
+function createPlaceholderLivenessSnapshot(): LivenessRunSnapshot {
+  return {
+    seed: 0,
+    isFixedSeed: false,
+    schedule: [],
+    activeChallenge: null,
+    passedCount: 0,
+    failedCount: 0,
+    lastOutcome: null,
+  };
 }
 
 function mapRepFlagToHint(exerciseId: ExerciseId, flag: string): string {
@@ -237,10 +282,17 @@ function buildPostRepFeedback(
   };
 }
 
-function createInitialRuntime(exerciseId: ExerciseId): RuntimeState {
+function createInitialRuntime(
+  exerciseId: ExerciseId,
+  livenessSnapshot: LivenessRunSnapshot,
+  runActive: boolean,
+  validRepsInRun = 0
+): RuntimeState {
   const secondary = getDefaultSecondaryMeta(exerciseId);
   return {
+    runActive,
     repCount: 0,
+    validRepsInRun,
     inRep: false,
     awaitingRest: false,
     progress: 0,
@@ -253,10 +305,12 @@ function createInitialRuntime(exerciseId: ExerciseId): RuntimeState {
     currentVelocity: 0,
     livePeakVelocity: 0,
     currentHoldMs: 0,
-    gateOk: false,
-    gateReason: 'NO_POSE',
+    frameCheck: createInitialFrameSnapshot(),
     cancelledReason: null,
     cancelledUntil: 0,
+    liveness: livenessSnapshot,
+    recentChallengeOutcome: null,
+    recentOutcomeUntil: 0,
     lastRep: null,
     lastRejection: null,
     postRepHint: null,
@@ -275,16 +329,16 @@ function snapshotUiState(
   const def = EXERCISES[exerciseId];
   const targetHoldMs = def.holdMs;
   const isAngleExercise = exerciseId === 'side_bend' || exerciseId === 'neck_tilt';
-  const movementProgress = rt.gateOk ? clamp01(rt.progress) : 0;
+  const frameReady = rt.frameCheck.stableOk;
+  const movementProgress = frameReady ? clamp01(rt.progress) : 0;
 
   let ringProgress = movementProgress;
   let displayHoldMs = 0;
   if (targetHoldMs > 0) {
-    if (!rt.gateOk) {
+    if (!frameReady) {
       ringProgress = 0;
       displayHoldMs = 0;
     } else if (rt.awaitingRest) {
-      // Sau khi vừa đủ giờ và đã tính rep, giữ vòng xanh đầy 100% lúc thả lỏng về tư thế nghỉ
       ringProgress = 1;
       displayHoldMs = targetHoldMs;
     } else {
@@ -301,15 +355,18 @@ function snapshotUiState(
 
   return {
     exerciseId,
+    runActive: rt.runActive,
     repCount: rt.repCount,
+    validRepsInRun: rt.validRepsInRun,
     ringProgress,
     movementProgress,
     currentHoldMs: displayHoldMs,
     targetHoldMs,
     awaitingRest: rt.awaitingRest,
-    gateOk: rt.gateOk,
-    gateReason: rt.gateReason,
+    frameCheck: rt.frameCheck,
     cancelledReason: rt.cancelledReason,
+    liveness: rt.liveness,
+    recentChallengeOutcome: rt.recentChallengeOutcome,
     lastRep: rt.lastRep,
     hintText: rt.hintText,
     hintTone: rt.hintTone,
@@ -334,73 +391,255 @@ function snapshotUiState(
 }
 
 /**
- * Hook bọc RepCounter của pose-engine.ts:
- * - Làm mượt landmarks bằng One Euro Filter trước khi đẩy vào engine.
- * - Đồng bộ trực tiếp metric, holdMs và awaitingRest từ RepCounter.push(frame).
- * - Cập nhật React state tiết kiệm (chỉ khi đổi rep/trạng thái hoặc mỗi ~100ms).
+ * Hook tổng hợp cho F3 + F4:
+ * - Không gọi newSeed() hay đọc/ghi ref trong lúc render (tránh lỗi SSR/hydration của Next.js).
+ * - Khởi tạo seed, LivenessRunController và SessionGuard trong useEffect phía client.
+ * - Lưu kết quả đạt/thất bại vào Zustand (RAM), không gây re-render React mỗi frame.
  */
 export function useRepCounter(exerciseId: ExerciseId) {
-  const counterRef = useRef<RepCounter>(new RepCounter(EXERCISES[exerciseId]));
-  const filterRef = useRef<LandmarkOneEuroFilter>(new LandmarkOneEuroFilter());
   const activeExerciseRef = useRef<ExerciseId>(exerciseId);
-  const runtimeRef = useRef<RuntimeState>(createInitialRuntime(exerciseId));
+  const counterRef = useRef<RepCounter | null>(null);
+  const filterRef = useRef<LandmarkOneEuroFilter | null>(null);
+  const stabilityGateRef = useRef<FrameStabilityGate | null>(null);
+  const livenessRef = useRef<LivenessRunController | null>(null);
+  const guardRef = useRef<SessionGuard | null>(null);
+  const runtimeRef = useRef<RuntimeState | null>(null);
 
+  // State khởi tạo thuần túy, không gọi hàm ngẫu nhiên khi SSR
   const [uiState, setUiState] = useState<RepCounterUiState>(() =>
-    snapshotUiState(exerciseId, runtimeRef.current)
+    snapshotUiState(
+      exerciseId,
+      createInitialRuntime(exerciseId, createPlaceholderLivenessSnapshot(), true, 0)
+    )
   );
 
-  const reset = useCallback(() => {
+  // 1. Khởi tạo lượt tập thử mặc định hoàn toàn phía client sau khi mount
+  useEffect(() => {
     const currentId = activeExerciseRef.current;
-    counterRef.current.reset();
-    filterRef.current.reset();
-    runtimeRef.current = createInitialRuntime(currentId);
-    setUiState(snapshotUiState(currentId, runtimeRef.current));
+    const { seed, isFixed } = createRunSeed();
+    const controller = new LivenessRunController(seed, isFixed);
+
+    counterRef.current = new RepCounter(EXERCISES[currentId]);
+    filterRef.current = new LandmarkOneEuroFilter();
+    stabilityGateRef.current = new FrameStabilityGate();
+    livenessRef.current = controller;
+    guardRef.current = new SessionGuard(seed, 0);
+
+    const initialRt = createInitialRuntime(
+      currentId,
+      controller.getSnapshot(),
+      true,
+      0
+    );
+    runtimeRef.current = initialRt;
+
+    useGameStore.getState().startLivenessRun(seed, controller.scheduledCount);
+    setUiState(snapshotUiState(currentId, initialRt));
   }, []);
 
+  // 2. Khi đổi động tác: tạo RepCounter mới và reset bộ kiểm tra khung hình cho danh sách khớp mới
   useEffect(() => {
+    const prevId = activeExerciseRef.current;
     activeExerciseRef.current = exerciseId;
+    if (prevId === exerciseId) return;
+
+    const rt = runtimeRef.current;
     counterRef.current = new RepCounter(EXERCISES[exerciseId]);
-    filterRef.current.reset();
-    runtimeRef.current = createInitialRuntime(exerciseId);
-    setUiState(snapshotUiState(exerciseId, runtimeRef.current));
+    filterRef.current?.reset();
+    stabilityGateRef.current?.reset();
+
+    const livenessSnap =
+      livenessRef.current?.getSnapshot() ?? createPlaceholderLivenessSnapshot();
+    const nextRt = createInitialRuntime(
+      exerciseId,
+      livenessSnap,
+      rt?.runActive ?? true,
+      rt?.validRepsInRun ?? 0
+    );
+    runtimeRef.current = nextRt;
+    setUiState(snapshotUiState(exerciseId, nextRt));
   }, [exerciseId]);
+
+  // Đặt lại bộ đếm rep cho động tác hiện tại (giữ nguyên lượt tập thử đang chạy)
+  const reset = useCallback(() => {
+    const currentId = activeExerciseRef.current;
+    const rt = runtimeRef.current;
+    if (!rt) return;
+
+    counterRef.current?.reset();
+    filterRef.current?.reset();
+    rt.repCount = 0;
+    rt.inRep = false;
+    rt.awaitingRest = false;
+    rt.progress = 0;
+    rt.currentHoldMs = 0;
+    rt.livePeakVelocity = 0;
+    rt.lastRep = null;
+    rt.lastRejection = null;
+    rt.cancelledReason = null;
+    rt.postRepHint = null;
+    rt.hintText = i18n.play.practice.exercises[currentId].readyCue;
+    rt.hintTone = 'neutral';
+    setUiState(snapshotUiState(currentId, rt));
+  }, []);
+
+  // Bắt đầu một Lượt tập thử (Run) mới với seed mới
+  const startNewRun = useCallback(() => {
+    const currentId = activeExerciseRef.current;
+    const { seed, isFixed } = createRunSeed();
+    const nextController = new LivenessRunController(seed, isFixed);
+
+    livenessRef.current = nextController;
+    guardRef.current = new SessionGuard(seed, 0);
+    counterRef.current = new RepCounter(EXERCISES[currentId]);
+    filterRef.current = new LandmarkOneEuroFilter();
+    stabilityGateRef.current = new FrameStabilityGate();
+
+    useGameStore.getState().startLivenessRun(seed, nextController.scheduledCount);
+
+    const nextRt = createInitialRuntime(
+      currentId,
+      nextController.getSnapshot(),
+      true,
+      0
+    );
+    runtimeRef.current = nextRt;
+    setUiState(snapshotUiState(currentId, nextRt));
+  }, []);
+
+  // Kết thúc lượt tập thử hiện tại (giữ thống kê tạm trong RAM để xem kết quả)
+  const stopRun = useCallback(() => {
+    const currentId = activeExerciseRef.current;
+    const rt = runtimeRef.current;
+    if (!rt) return;
+
+    counterRef.current?.reset();
+    rt.runActive = false;
+    rt.inRep = false;
+    rt.awaitingRest = false;
+    rt.progress = 0;
+    rt.currentHoldMs = 0;
+    rt.hintText = i18n.play.practice.status.runEnded;
+    rt.hintTone = 'neutral';
+    setUiState(snapshotUiState(currentId, rt));
+  }, []);
 
   const pushFrame = useCallback((frame: Frame) => {
     const counter = counterRef.current;
-    const def = counter.def;
-    const isHold = def.holdMs > 0;
+    const filter = filterRef.current;
+    const stabilityGate = stabilityGateRef.current;
+    const livenessCtrl = livenessRef.current;
+    const guard = guardRef.current;
     const rt = runtimeRef.current;
 
-    const prevGateOk = rt.gateOk;
-    const prevGateReason = rt.gateReason;
-    const prevAwaitingRest = rt.awaitingRest;
-    let forceSync = false;
-
-    // Làm mượt landmarks ở tầng F3 trước khi đưa vào pose-engine.ts
-    if (frame.lm.length >= 33) {
-      filterRef.current.applyInPlace(frame.lm, frame.t);
-    } else {
-      filterRef.current.reset();
+    if (!counter || !filter || !stabilityGate || !livenessCtrl || !guard || !rt) {
+      return;
     }
 
-    const pushRes = counter.push(frame);
-    const { gate, progress, rep } = pushRes;
-    rt.gateOk = gate.ok;
-    rt.gateReason = gate.reason ?? null;
-    rt.metricValue = pushRes.metric ?? null;
-    rt.awaitingRest = Boolean(pushRes.awaitingRest);
-    rt.currentHoldMs = pushRes.holdMs ?? 0;
+    const def = counter.def;
+    const isHold = def.holdMs > 0;
 
-    if (!gate.ok) {
-      // Chỉ báo hủy rep nếu đang tập dở (không báo hủy trong pha thả lỏng sau khi đã chốt rep)
+    const prevStableOk = rt.frameCheck.stableOk;
+    const prevStableReason = rt.frameCheck.stableReason;
+    const prevAwaitingRest = rt.awaitingRest;
+    const prevChallengeId = rt.liveness.activeChallenge?.id ?? null;
+    let forceSync = false;
+
+    // 1. Làm mượt landmarks bằng One Euro Filter ở tầng F3
+    if (frame.lm.length >= 33) {
+      filter.applyInPlace(frame.lm, frame.t);
+    } else {
+      filter.reset();
+    }
+
+    // 2. Lớp 0: Kiểm tra khung hình + bộ chống nhấp nháy 400ms
+    const rawCheck = evaluateFrameCheck(frame, def.id);
+    const frameSnap = stabilityGate.update(rawCheck, frame.t);
+    rt.frameCheck = frameSnap;
+
+    if (prevStableOk !== frameSnap.stableOk || prevStableReason !== frameSnap.stableReason) {
+      forceSync = true;
+    }
+
+    if (rt.cancelledReason && frame.t >= rt.cancelledUntil) {
+      rt.cancelledReason = null;
+      forceSync = true;
+    }
+    if (rt.recentChallengeOutcome && frame.t >= rt.recentOutcomeUntil) {
+      rt.recentChallengeOutcome = null;
+      forceSync = true;
+    }
+
+    if (!rt.runActive) {
+      rt.hintText = i18n.play.practice.status.runEnded;
+      rt.hintTone = 'neutral';
+      if (forceSync || frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
+        rt.lastUiSyncAt = frame.t;
+        setUiState(snapshotUiState(def.id, rt));
+      }
+      return;
+    }
+
+    // 3. Lớp 3b: Chạy SessionGuard + bộ điều phối Thử thách sống theo seed
+    guard.onFrame(frame);
+    const livenessStep = livenessCtrl.onFrame(frame, rt.validRepsInRun);
+    rt.liveness = livenessStep.snapshot;
+
+    if (livenessStep.startedNewChallenge) {
+      counter.reset();
+      rt.inRep = false;
+      rt.awaitingRest = false;
+      rt.progress = 0;
+      rt.currentHoldMs = 0;
+      rt.livePeakVelocity = 0;
+      rt.hintText = i18n.play.practice.status.challengePaused;
+      rt.hintTone = 'warning';
+      forceSync = true;
+    }
+
+    if (livenessStep.completedOutcome) {
+      const passed = livenessStep.completedOutcome.passed;
+      useGameStore.getState().recordChallengeOutcome(passed);
+      rt.recentChallengeOutcome = passed ? 'passed' : 'failed';
+      rt.recentOutcomeUntil = frame.t + OUTCOME_BANNER_MS;
+      rt.postRepHint = passed
+        ? i18n.play.practice.liveness.outcomePassed
+        : i18n.play.practice.liveness.outcomeFailed;
+      rt.postRepTone = passed ? 'success' : 'error';
+      rt.postRepUntil = frame.t + OUTCOME_BANNER_MS;
+      forceSync = true;
+    }
+
+    const currentChallengeId = rt.liveness.activeChallenge?.id ?? null;
+    if (prevChallengeId !== currentChallengeId) {
+      forceSync = true;
+    }
+
+    // Đang trong thử thách sống -> TẠM DỪNG đếm rep hoàn toàn
+    if (rt.liveness.activeChallenge !== null) {
+      rt.hintText = i18n.play.practice.status.challengePaused;
+      rt.hintTone = 'warning';
+
+      if (forceSync || frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
+        rt.lastUiSyncAt = frame.t;
+        setUiState(snapshotUiState(def.id, rt));
+      }
+      return;
+    }
+
+    // 4. Chỉ cho phép đếm rep khi khung hình đạt trạng thái "Sẵn sàng"
+    if (!frameSnap.stableOk) {
       if (rt.inRep && !rt.awaitingRest) {
-        rt.cancelledReason = gate.reason ?? 'NO_POSE';
+        rt.cancelledReason = frameSnap.stableReason ?? 'NO_POSE';
         rt.cancelledUntil = frame.t + CANCELLED_BANNER_MS;
         rt.inRep = false;
         forceSync = true;
       }
 
+      counter.reset();
+      rt.awaitingRest = false;
       rt.progress = 0;
+      rt.metricValue = null;
       rt.secondaryValueDeg = null;
       rt.prevSampleT = null;
       rt.prevSampleP = 0;
@@ -408,19 +647,35 @@ export function useRepCounter(exerciseId: ExerciseId) {
       rt.livePeakVelocity = 0;
       rt.currentHoldMs = 0;
 
-      const reasonKey: GateReason = gate.reason ?? 'NO_POSE';
-      rt.hintText = i18n.play.practice.gateReasons[reasonKey];
+      const reasonKey: FrameCheckReason = frameSnap.stableReason ?? 'NO_POSE';
+      rt.hintText = i18n.play.practice.frameCheck.reasons[reasonKey];
       rt.hintTone = rt.cancelledReason ? 'error' : 'warning';
 
-      if (prevGateOk !== gate.ok || prevGateReason !== rt.gateReason) {
-        forceSync = true;
+      if (forceSync || frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
+        rt.lastUiSyncAt = frame.t;
+        setUiState(snapshotUiState(def.id, rt));
       }
-    } else {
-      if (rt.cancelledReason && frame.t >= rt.cancelledUntil) {
-        rt.cancelledReason = null;
-        forceSync = true;
-      }
+      return;
+    }
 
+    // 5. Khung hình đã Sẵn sàng -> đẩy frame vào RepCounter của pose-engine.ts
+    const pushRes = counter.push(frame);
+    const { gate, progress, rep } = pushRes;
+    rt.metricValue = pushRes.metric ?? null;
+    rt.awaitingRest = Boolean(pushRes.awaitingRest);
+    rt.currentHoldMs = pushRes.holdMs ?? 0;
+
+    if (!gate.ok) {
+      if (rt.inRep && !rt.awaitingRest) {
+        rt.cancelledReason = gate.reason ?? 'NO_POSE';
+        rt.cancelledUntil = frame.t + CANCELLED_BANNER_MS;
+        rt.inRep = false;
+        forceSync = true;
+      }
+      rt.progress = 0;
+      rt.currentHoldMs = 0;
+      rt.livePeakVelocity = 0;
+    } else {
       const secondary = measureSecondaryAngle(def.id, frame);
       if (secondary) {
         rt.secondaryKind = secondary.kind;
@@ -446,12 +701,14 @@ export function useRepCounter(exerciseId: ExerciseId) {
       const endThr = isHold ? THRESHOLDS.HOLD_REARM_PROGRESS : CONFIG.endProgress;
 
       if (rep !== null) {
+        guard.addRep(rep);
         rt.inRep = false;
         rt.livePeakVelocity = rep.peakVelocity;
         rt.cancelledReason = null;
 
         if (rep.counted) {
           rt.repCount += 1;
+          rt.validRepsInRun += 1;
         }
 
         rt.lastRep = {
@@ -482,7 +739,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
         rt.hintTone = feedback.tone;
         forceSync = true;
       } else if (rt.awaitingRest) {
-        // Pha thả lỏng sau khi rep giữ đã tính: tuyệt đối không cảnh báo tốc độ hay hủy rep
         rt.inRep = false;
         if (rt.postRepHint && frame.t < rt.postRepUntil) {
           rt.hintText = rt.postRepHint;
@@ -494,8 +750,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
       } else {
         if (!rt.inRep) {
           if (p > startThr && (!isHold || p <= 1.0 || rt.currentHoldMs > 0)) {
-            // Với bài giữ: nếu chưa có currentHoldMs và mở đầu đã > 1.0 (ảnh tĩnh / vào sẵn tư thế)
-            // thì RepCounter đang chờ về tư thế nghỉ trước.
             if (isHold && p >= 1 && rt.currentHoldMs === 0) {
               rt.hintText = i18n.play.practice.status.startFromRest;
               rt.hintTone = 'warning';
@@ -513,7 +767,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
           rt.livePeakVelocity = instVelocity;
         }
 
-        // Gợi ý form tiếng Việt theo thời gian thực
         if (rt.postRepHint && frame.t < rt.postRepUntil && !rt.inRep) {
           rt.hintText = rt.postRepHint;
           rt.hintTone = rt.postRepTone;
@@ -555,7 +808,7 @@ export function useRepCounter(exerciseId: ExerciseId) {
         }
       }
 
-      if (prevGateOk !== gate.ok || prevAwaitingRest !== rt.awaitingRest) {
+      if (prevAwaitingRest !== rt.awaitingRest) {
         forceSync = true;
       }
     }
@@ -574,6 +827,13 @@ export function useRepCounter(exerciseId: ExerciseId) {
           Math.round(prev.currentHoldMs / 50) ===
             Math.round(next.currentHoldMs / 50);
 
+        const sameFrameCheck =
+          prev.frameCheck.stableOk === next.frameCheck.stableOk &&
+          prev.frameCheck.stableReason === next.frameCheck.stableReason &&
+          prev.frameCheck.rawOk === next.frameCheck.rawOk &&
+          prev.frameCheck.rawReason === next.frameCheck.rawReason &&
+          prev.frameCheck.transitioningTo === next.frameCheck.transitioningTo;
+
         const sameDebug =
           Math.round((prev.debug.metricValue ?? -999) * 10) ===
             Math.round((next.debug.metricValue ?? -999) * 10) &&
@@ -590,12 +850,14 @@ export function useRepCounter(exerciseId: ExerciseId) {
         if (
           !forceSync &&
           sameProgress &&
+          sameFrameCheck &&
           sameDebug &&
+          prev.runActive === next.runActive &&
           prev.repCount === next.repCount &&
+          prev.validRepsInRun === next.validRepsInRun &&
           prev.awaitingRest === next.awaitingRest &&
-          prev.gateOk === next.gateOk &&
-          prev.gateReason === next.gateReason &&
           prev.cancelledReason === next.cancelledReason &&
+          prev.recentChallengeOutcome === next.recentChallengeOutcome &&
           prev.hintText === next.hintText &&
           prev.hintTone === next.hintTone &&
           prev.lastRep === next.lastRep
@@ -612,5 +874,7 @@ export function useRepCounter(exerciseId: ExerciseId) {
     uiState,
     pushFrame,
     reset,
+    startNewRun,
+    stopRun,
   };
 }
