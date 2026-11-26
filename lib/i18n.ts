@@ -1,9 +1,8 @@
-import type { ChallengeId, ExerciseId, GateReason } from '@/lib/pose-engine';
+import type { ChallengeId, ExerciseId, GateReason, Verdict } from '@/lib/pose-engine';
 
 /**
- * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest.
- * Giữ nguyên toàn bộ khóa F1 + F2 + F3 và bổ sung đầy đủ chuỗi cho F4
- * (kiểm tra khung hình lớp 0, thử thách sống lớp 3b, lượt tập thử và debug).
+ * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a).
+ * Giữ nguyên toàn bộ khóa cũ để chế độ luyện tập và các component F1–F4 không bị ảnh hưởng.
  */
 export const i18n = {
   // ── F1: Metadata toàn cục ──
@@ -13,16 +12,19 @@ export const i18n = {
       'RPG vận động 5–10 phút tại bàn học cho sinh viên IT, kiểm chứng động tác bằng camera ngay trên máy.',
   },
 
-  // ── F1: Trang chủ (app/page.tsx) ──
+  // ── F1 + F5a: Trang chủ (app/page.tsx) ──
   home: {
     title: 'FitQuest',
     description:
       'Game RPG giúp sinh viên IT tập các bài vận động ngắn 5–10 phút ngay tại bàn học với camera kiểm chứng trực tiếp trên máy bạn.',
     nameLabel: 'Tên hiển thị (không bắt buộc)',
     namePlaceholder: 'Nhập tên của bạn...',
-    startButton: 'Bắt đầu chơi',
-    privacyNote:
-      'Video không bao giờ rời khỏi máy bạn. Dữ liệu chỉ lưu tạm trong RAM.',
+    startButton: 'Vào Hầm Ngục (Dungeon Run)',
+    practiceButton: 'Chế độ luyện tập tự do',
+    privacyNote: 'Video không bao giờ rời khỏi máy bạn.',
+    reloadLossNotice: 'Tải lại trang sẽ mất tiến độ',
+    levelPrefix: 'Cấp',
+    xpUnit: 'XP',
   },
 
   // ── F1 + F2 + F3 + F4: Trang chơi, camera, AI, luyện tập & thử thách sống ──
@@ -35,11 +37,17 @@ export const i18n = {
     xpPrefix: 'XP:',
 
     // Khóa dùng chung trên /play (F2)
-    title: 'Phòng tập AI',
+    title: 'FitQuest',
     privacyNotice:
       'Video xử lý hoàn toàn trên máy bạn — không bao giờ gửi qua mạng.',
     retryButton: 'Thử lại',
     errorDetailPrefix: 'Chi tiết lỗi gốc:',
+
+    // Chuyển chế độ trên /play (F5a giữ nguyên chế độ luyện tập F4)
+    modeTabs: {
+      dungeon: 'Dungeon Run',
+      practice: 'Chế độ luyện tập',
+    },
 
     // Thông báo lỗi camera (components/CameraView.tsx)
     camera: {
@@ -75,7 +83,7 @@ export const i18n = {
       fpsUnit: 'FPS',
     },
 
-    // ── F3: Chế độ luyện tập 5 động tác ──
+    // ── F3 + F4: Chế độ luyện tập 5 động tác ──
     practice: {
       modeBadge: 'Chế độ luyện tập',
       chooseExerciseLabel: 'Chọn động tác luyện tập',
@@ -94,7 +102,6 @@ export const i18n = {
       bodyScopeUpper: 'Chỉ cần thấy thân trên',
       holdUnit: 's',
 
-      // Trạng thái theo thời gian thực & kết quả rep
       status: {
         waitingCamera: 'Đang chờ camera và AI sẵn sàng...',
         holding: 'Giữ nguyên tư thế...',
@@ -111,7 +118,6 @@ export const i18n = {
         unknownIssue: 'Động tác chưa đạt yêu cầu, hãy thử lại',
       },
 
-      // Lý do mất tư thế từ qualityGate (pose-engine.ts)
       gateReasons: {
         NO_POSE: 'Không thấy người trong khung hình. Hãy đứng hoặc ngồi vào trước camera.',
         LOW_VISIBILITY:
@@ -121,7 +127,6 @@ export const i18n = {
         TOO_FAR: 'Bạn đang đứng quá xa camera (thân quá nhỏ). Hãy tiến lại gần hơn.',
       } satisfies Record<GateReason, string>,
 
-      // Thông tin & gợi ý riêng cho từng động tác trong EXERCISES
       exercises: {
         squat: {
           name: 'Squat',
@@ -181,7 +186,6 @@ export const i18n = {
         }
       >,
 
-      // Gợi ý theo id của từng FormCheck trong EXERCISES[*].form
       formChecks: {
         TORSO_UPRIGHT: 'Giữ lưng thẳng hơn',
         HIPS_LEVEL: 'Giữ hông tương đối cân bằng',
@@ -189,7 +193,6 @@ export const i18n = {
         SHOULDERS_LEVEL: 'Giữ vai tương đối ngang',
       } as Record<string, string>,
 
-      // Gợi ý theo mã cờ trả về trong RepResult.flags của pose-engine.ts
       repFlags: {
         TOO_FAST: 'Chậm lại, kiểm soát động tác tốt hơn',
         TOO_SLOW: 'Thực hiện dứt khoát hơn (quá lâu)',
@@ -202,7 +205,6 @@ export const i18n = {
         FORM_SHOULDERS_LEVEL: 'Giữ vai tương đối ngang',
       } as Record<string, string>,
 
-      // ── F4: Kiểm tra khung hình (Lớp 0) & Thử thách sống (Lớp 3b) ──
       frameCheck: {
         title: 'Kiểm tra khung hình',
         readyBadge: 'Sẵn sàng',
@@ -252,7 +254,6 @@ export const i18n = {
         },
       },
 
-      // Khung debug F3 + F4 (bật/tắt bằng nút Debug)
       debug: {
         toggleShowButton: 'Hiện Debug',
         toggleHideButton: 'Ẩn Debug',
@@ -299,6 +300,190 @@ export const i18n = {
         noRejection: 'Chưa có rep nào bị từ chối',
         flagsPrefix: 'Cờ:',
       },
+    },
+  },
+
+  // ── F5a: Dungeon Run (Đánh quái bằng cơ thể) ──
+  dungeon: {
+    modeBadge: 'Hầm Ngục · Dungeon Run',
+    stagePrefix: 'Phòng',
+    bossTag: 'BOSS CUỐI',
+    normalTag: 'QUÁI THƯỜNG',
+    hpLabel: 'HP',
+    chargeBarLabel: 'Nạp lực tung đòn',
+    repProgressLabel: 'Nhịp tung đòn',
+    comboLabel: 'COMBO',
+    comboDamageHint: 'Tăng sát thương (không tăng XP)',
+    critBanner: 'CHÍ MẠNG!',
+    damageUnit: 'ST',
+    xpFloatingPrefix: '+',
+    xpUnit: 'XP',
+    defeatedBanner: 'ĐÃ HẠ GỤC! Chuẩn bị đón quái kế tiếp...',
+    pausedOverlayTitle: 'Đang tạm dừng',
+    pausedOverlayDesc: 'Nhấn "Tiếp tục" để quay lại chiến đấu.',
+
+    controls: {
+      pause: 'Tạm dừng',
+      resume: 'Tiếp tục',
+      swapMonster: 'Đổi quái',
+      swapUsed: 'Đã dùng Đổi quái',
+      finishRun: 'Kết thúc lượt',
+      newRun: 'Lượt mới',
+    },
+
+    xpBar: {
+      levelPrefix: 'Cấp',
+      nextLevelPrefix: 'Còn',
+      capPrefix: 'Giới hạn phiên:',
+      capReachedNotice: 'Hôm nay bạn đã tập đủ, nghỉ ngơi nhé',
+      tentativeLabel: 'XP tạm trong lượt:',
+    },
+
+    monsters: {
+      squat: {
+        name: 'Golem Đá',
+        bossName: 'Đại Golem Hắc Thạch',
+        actionLabel: 'Squat để đập giáp đá',
+      },
+      overhead_reach: {
+        name: 'Rồng Ngái Ngủ',
+        bossName: 'Hỏa Long Thức Giấc',
+        actionLabel: 'Vươn vai giữ 2s để nạp chưởng',
+      },
+      side_bend: {
+        name: 'Rắn Lắc',
+        bossName: 'Mãnh Xà Bóng Đêm',
+        actionLabel: 'Nghiêng người giữ 1,5s để né độc',
+      },
+      neck_tilt: {
+        name: 'Bóng Ma Cứng Cổ',
+        bossName: 'Ác Linh Khóa Cổ',
+        actionLabel: 'Nghiêng cổ giữ 2s để phá nguyền',
+      },
+      high_knees: {
+        name: 'Nhện Nhảy',
+        bossName: 'Chúa Nhện Hầm Ngục',
+        actionLabel: 'Nâng gối liên hoàn để chặn tơ',
+      },
+    } satisfies Record<
+      ExerciseId,
+      { name: string; bossName: string; actionLabel: string }
+    >,
+
+    sideObjectives: {
+      title: 'Mục tiêu phụ lượt này',
+      subtitle: 'Thành tích hiển thị (không cộng thêm XP)',
+      items: {
+        crit_3: 'Đạt 3 đòn chí mạng (chất lượng ≥ 0,9)',
+        combo_8: 'Đạt chuỗi Combo x8',
+        boss_no_swap: 'Hạ Boss không dùng Đổi quái',
+        high_quality_5: 'Đạt 5 rep chất lượng ≥ 0,85',
+        boss_crit: 'Tung ít nhất 1 đòn chí mạng vào Boss',
+      },
+    },
+
+    skills: {
+      title: 'Kỹ năng theo cấp độ',
+      realBadge: 'Hoạt động thật',
+      comingSoonBadge: 'Sắp có',
+      unlockedTag: 'Đã mở',
+      lockedPrefix: 'Mở ở Cấp',
+      items: {
+        free_swap: {
+          name: 'Đổi quái miễn phí',
+          desc: 'Đổi 1 quái sang động tác khác miễn phí mỗi lượt.',
+        },
+        second_wind: {
+          name: 'Hơi thở thứ hai',
+          desc: 'Thêm 1 lần đổi quái miễn phí mỗi phiên chơi.',
+        },
+        focus: {
+          name: 'Tập trung cao độ',
+          desc: '+10% XP cho nhiệm vụ đầu tiên của lượt.',
+        },
+        dungeon_skin: {
+          name: 'Giáp Hầm Ngục',
+          desc: 'Mở khóa huy hiệu và giao diện nhân vật đặc biệt.',
+        },
+        raid_boss: {
+          name: 'Đại Boss Hầm Ngục',
+          desc: 'Mở khóa nhiệm vụ Boss đặc biệt với mức XP cao hơn.',
+        },
+      },
+    },
+
+    stats: {
+      title: 'Chỉ số nhân vật (RAM)',
+      str: 'STR (Sức mạnh)',
+      agi: 'AGI (Nhanh nhẹn)',
+      vit: 'VIT (Thể lực)',
+      wis: 'WIS (Trí tuệ)',
+    },
+
+    verdicts: {
+      verified: {
+        label: 'ĐÃ XÁC THỰC (Verified)',
+        desc: 'Lượt tập hợp lệ. XP chính thức và chỉ số đã được cộng vào nhân vật.',
+      },
+      review: {
+        label: 'CẦN KIỂM TRA (Review)',
+        desc: 'Phát hiện dấu hiệu bất thường nên hệ thống tạm giữ XP (chưa cộng XP vào nhân vật).',
+      },
+      rejected: {
+        label: 'KHÔNG HỢP LỆ (Rejected)',
+        desc: 'Lượt tập bị từ chối do vi phạm kiểm tra chống gian lận — KHÔNG cộng XP.',
+      },
+    } satisfies Record<Verdict, { label: string; desc: string }>,
+
+    verdictReasons: {
+      STATIC_SUBJECT: 'Hình ảnh quá tĩnh trong thời gian dài (nghi vấn ảnh tĩnh).',
+      CHALLENGE_FAILED: 'Không vượt qua thử thách sống giơ tay trong lượt.',
+      LOW_FPS: 'Tốc độ khung hình quá thấp, dữ liệu chuyển động thiếu tin cậy.',
+      NOISY_REPS: 'Tỷ lệ rep bị giật/nhiễu bất thường quá cao.',
+      LOOPED_MOTION: 'Quỹ đạo các rep lặp lại gần như giống hệt nhau (nghi vấn phát lại video).',
+      UNIFORM_TEMPO: 'Nhịp thời gian giữa các rep đều bất thường.',
+      TOO_MANY_REPS: 'Số rep vượt quá giới hạn vật lý so với thời lượng lượt.',
+      INVALID_REP: 'Có rep không vượt qua bước kiểm tra lại của engine.',
+    } as Record<string, string>,
+
+    xpDiffExplanations: {
+      xp_cap:
+        'XP chính thức từ finalizeRun thấp hơn XP tạm vì đã chạm giới hạn 600 XP trong lần tải trang này.',
+      review_held:
+        'XP chính thức là 0 vì lượt ở trạng thái Cần kiểm tra (review) — engine tạm giữ toàn bộ XP.',
+      rejected_zero:
+        'XP chính thức là 0 vì lượt bị từ chối (rejected) — không cộng XP cho lượt không hợp lệ.',
+      recheck_adjusted:
+        'XP chính thức được tính lại bởi finalizeRun sau bước kiểm tra lại từng rep.',
+    },
+
+    summary: {
+      titleVictory: 'Hoàn thành Hầm Ngục!',
+      titleEnded: 'Kết thúc lượt tập',
+      officialXpLabel: 'XP chính thức (finalizeRun)',
+      tentativeXpLabel: 'XP tạm cộng dồn trên UI',
+      repsLabel: 'Rep đạt / bị loại / hủy',
+      livenessLabel: 'Thử thách sống (Đạt / Trượt)',
+      monstersClearedLabel: 'Quái đã hạ',
+      levelChangeLabel: 'Cấp độ',
+      statsChangeLabel: 'Chỉ số nhân vật',
+      objectivesLabel: 'Mục tiêu phụ trong lượt',
+      reasonsTitle: 'Chi tiết kiểm định chống gian lận',
+      noReasonsText: 'Không phát hiện bất thường nào.',
+      playAgainButton: 'Chơi lượt mới',
+      backHomeButton: 'Về trang chủ',
+    },
+
+    debug: {
+      title: 'Debug Dungeon (F5a)',
+      sampleRunButton: 'Lượt mẫu (3 quái × 2 rep)',
+      sampleRunTag: 'Đang chạy Lượt mẫu',
+      normalRunTag: 'Lượt chuẩn (3–5 quái)',
+      seedLabel: 'Seed hầm ngục',
+      tentativeXpLabel: 'XP tạm (UI)',
+      officialXpLabel: 'XP finalizeRun',
+      pendingOfficial: 'Chờ kết thúc lượt',
+      swapsLabel: 'Lượt Đổi quái còn lại',
     },
   },
 } as const;
