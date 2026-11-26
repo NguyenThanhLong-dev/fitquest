@@ -41,9 +41,10 @@ function translateReasonCode(code: string): string {
 }
 
 /**
- * Màn tổng kết sau khi kết thúc lượt Dungeon Run (F5a + Rương chiến lợi phẩm F5b):
+ * Màn tổng kết sau khi kết thúc lượt Dungeon Run (F5a + F5b + link Bảng xếp hạng F7):
  * - Kết quả từ finalizeRun (verified/review/rejected) + XP chính thức & giải thích chênh lệch.
  * - Rương chiến lợi phẩm cosmetic theo seed: verified (4 bậc), review (chỉ rương thường), rejected (không có).
+ * - Có nút "Xem bảng xếp hạng tuần" dẫn sang /leaderboard.
  */
 export function RunSummary({
   summary,
@@ -338,7 +339,7 @@ export function RunSummary({
         )}
       </div>
 
-      {/* Nút hành động cuối màn tổng kết */}
+      {/* Nút hành động cuối màn tổng kết (bổ sung link /leaderboard cho F7) */}
       <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
         <button
           type="button"
@@ -347,6 +348,13 @@ export function RunSummary({
         >
           {sumTexts.playAgainButton}
         </button>
+
+        <Link
+          href="/leaderboard"
+          className="rounded-xl border border-amber-400/60 bg-amber-500/15 px-5 py-3 text-base font-bold text-amber-200 transition hover:bg-amber-500/25"
+        >
+          🏆 {sumTexts.leaderboardButton}
+        </Link>
 
         <Link
           href="/"

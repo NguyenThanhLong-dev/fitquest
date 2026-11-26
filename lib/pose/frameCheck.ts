@@ -9,7 +9,8 @@ import {
 
 /**
  * Các ngưỡng kiểm tra khung hình (Lớp 0) và chống nhấp nháy (300–500ms).
- * Đặt tập trung thành hằng số để dễ hiệu chỉnh và viết test Vitest.
+ * Đã nới `tooCloseTorsoHeight` lên 0.78 để bài `side_bend` (cần thấy vai + hông ở cự ly gần bàn)
+ * không bị chặn oan là TOO_CLOSE.
  */
 export const FRAME_CHECK_CONFIG = {
   /** Độ tin cậy tối thiểu cho từng khớp bắt buộc. */
@@ -19,7 +20,7 @@ export const FRAME_CHECK_CONFIG = {
   /** Tỷ lệ chiều rộng vai so với bề ngang khung hình vượt mức này => đứng quá gần. */
   tooCloseShoulderWidth: 0.62,
   /** Tỷ lệ chiều cao thân (vai->hông) so với chiều cao khung hình vượt mức này => đứng quá gần. */
-  tooCloseTorsoHeight: 0.62,
+  tooCloseTorsoHeight: 0.78,
   /** Thời gian đạt / không đạt liên tục (ms) trước khi đổi trạng thái "Sẵn sàng" (chống nhấp nháy). */
   debounceMs: 400,
 } as const;
@@ -53,7 +54,7 @@ export interface FrameStabilitySnapshot {
 
 /**
  * Trả về danh sách khớp bắt buộc cho từng động tác:
- * - Squat: chỉ dùng vai, hông và đầu gối (bỏ cổ chân/bàn chân; giữ vai vì pose-engine đo unit() theo vai).
+ * - Squat: chỉ dùng vai, hông và đầu gối (bỏ cổ chân/bàn chân).
  * - Các động tác còn lại: lấy nguyên danh sách required từ EXERCISES của pose-engine.ts.
  */
 export function getRequiredLandmarks(exerciseId: ExerciseId): number[] {
@@ -99,7 +100,6 @@ export function evaluateFrameCheck(
   // Bước 1: Kiểm tra bằng hàm qualityGate chính thức của pose-engine.ts
   const gate = qualityGate(frame, required, minVisibility);
   if (!gate.ok) {
-    // Nếu người đứng quá sát khiến khớp bị tràn mép nhưng hai vai đã quá to -> báo rõ TOO_CLOSE
     if (
       gate.reason === 'OUT_OF_FRAME' &&
       shoulderWidthRatio !== null &&
@@ -121,7 +121,7 @@ export function evaluateFrameCheck(
     };
   }
 
-  // Bước 2: Phát hiện đứng quá gần (thân hoặc vai chiếm quá lớn trong khung)
+  // Bước 2: Phát hiện đứng quá gần (vai hoặc thân chiếm quá lớn trong khung)
   const hipsRequired = required.includes(LM.L_HIP) || required.includes(LM.R_HIP);
   if (
     (shoulderWidthRatio !== null && shoulderWidthRatio > tooCloseShoulderWidth) ||
@@ -135,14 +135,17 @@ export function evaluateFrameCheck(
     };
   }
 
-  // Bước 3: Phát hiện khớp bắt buộc quá sát mép khung hình (dễ bị cắt khi cử động)
+  // Bước 3: Phát hiện khớp bắt buộc quá sát mép khung hình
+  // Riêng cạnh dưới của bài side_bend cho phép sát mép hơn (0.995) để tránh rớt hông khi ngồi/đứng gần bàn
+  const bottomLimit = exerciseId === 'side_bend' ? 0.995 : 1 - edgeMargin;
+
   for (let i = 0; i < required.length; i++) {
     const pt = frame.lm[required[i]];
     if (
       pt.x < edgeMargin ||
       pt.x > 1 - edgeMargin ||
       pt.y < edgeMargin ||
-      pt.y > 1 - edgeMargin
+      pt.y > bottomLimit
     ) {
       return {
         ok: false,
@@ -189,7 +192,6 @@ export class FrameStabilityGate {
     let transitionProgress = 0;
 
     if (raw.ok === this.stableOk) {
-      // Trạng thái tức thời khớp trạng thái ổn định -> hủy bộ đếm chuyển tiếp
       this.pendingOk = null;
       this.pendingSinceMs = null;
       if (!this.stableOk) {

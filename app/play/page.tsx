@@ -23,7 +23,6 @@ import { useGameStore } from '@/lib/game/store';
 import type { ExerciseId, Frame, Landmark } from '@/lib/pose-engine';
 import { i18n } from '@/lib/i18n';
 
-// Bật/tắt chế độ Debug (Lượt mẫu 3 quái × 2 rep, seed, so sánh XP tạm vs finalizeRun, F4 debug)
 const SHOW_DEBUG_TOOLS = true;
 
 type PlayMode = 'dungeon' | 'practice';
@@ -44,13 +43,6 @@ const HINT_CARD_STYLES: Record<ProgressTone, string> = {
   error: 'border-rose-500/50 bg-rose-950/60 text-rose-100',
 };
 
-/**
- * Trang chơi chính ("/play") — Task F5a + F5b:
- * - Giữ nguyên toàn bộ logic Dungeon Run (F5a) và Chế độ luyện tập (F3 + F4).
- * - F5b: nút bật/tắt tiếng Web Audio API (mở khóa sau lần bấm đầu tiên),
- *   tự động giảm hiệu ứng khi `prefers-reduced-motion` hoặc `FPS < 20`,
- *   màn chúc mừng lên cấp (<2s) và rương chiến lợi phẩm cosmetic sau lượt.
- */
 export default function PlayPage() {
   const displayName = useGameStore((state) => state.displayName);
   const verifiedReps = useGameStore((state) => state.verifiedReps);
@@ -68,7 +60,6 @@ export default function PlayPage() {
   const overlayRef = useRef<PoseOverlayHandle | null>(null);
   const modeRef = useRef<PlayMode>(mode);
 
-  // Đọc tham số ?mode=practice phía client (tránh lỗi SSR/Suspense)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('mode') === 'practice') {
@@ -76,7 +67,6 @@ export default function PlayPage() {
     }
   }, []);
 
-  // Lắng nghe prefers-reduced-motion của hệ điều hành (chỉ phía client)
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -86,7 +76,6 @@ export default function PlayPage() {
     return () => mq.removeEventListener('change', sync);
   }, []);
 
-  // Mở khóa Web Audio API sau lần bấm/phím đầu tiên của người dùng (không tự phát trước đó)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleFirstGesture = () => unlockGameAudio();
@@ -116,7 +105,6 @@ export default function PlayPage() {
     []
   );
 
-  // Vẽ khung xương rút gọn trực tiếp lên canvas (không gây re-render React)
   const handlePose = useCallback((landmarks: readonly Landmark[] | null) => {
     overlayRef.current?.draw(landmarks);
   }, []);
@@ -169,7 +157,6 @@ export default function PlayPage() {
   }, [toggleSound]);
 
   const isAiActive = cameraReady && status === 'ready';
-  // Tự tắt hiệu ứng nặng khi FPS đo được rơi xuống dưới 20 (bỏ qua giá trị 0 lúc vừa khởi động)
   const isLowFps =
     isAiActive &&
     !isShowingSummary &&
@@ -177,22 +164,22 @@ export default function PlayPage() {
     detectionFps < FX_CONFIG.lowFpsThreshold;
   const reducedFx = prefersReducedMotion || isLowFps;
 
-  // Dữ liệu hiển thị cho chế độ Dungeon Run
   const dungeonUi = dungeon.uiState;
   const dungeonActiveWarning =
     dungeonUi.cancelledReason ??
     (!dungeonUi.frameCheck.stableOk ? dungeonUi.frameCheck.stableReason : null);
 
-  // Dữ liệu hiển thị cho chế độ Luyện tập (F4)
   const practiceUi = practice.uiState;
   const activeExMeta = i18n.play.practice.exercises[selectedExercise];
   const isHoldExercise = practiceUi.targetHoldMs > 0;
   const bodyScopeText =
     activeExMeta.scope === 'squat'
       ? i18n.play.practice.bodyScopeSquat
-      : activeExMeta.scope === 'full'
-        ? i18n.play.practice.bodyScopeFull
-        : i18n.play.practice.bodyScopeUpper;
+      : activeExMeta.scope === 'torso'
+        ? i18n.play.practice.bodyScopeTorso
+        : activeExMeta.scope === 'full'
+          ? i18n.play.practice.bodyScopeFull
+          : i18n.play.practice.bodyScopeUpper;
   const practiceRingValueText = isHoldExercise
     ? `${(practiceUi.currentHoldMs / 1000).toFixed(1)}${i18n.play.practice.holdUnit}`
     : `${Math.round(practiceUi.ringProgress * 100)}%`;
@@ -227,7 +214,6 @@ export default function PlayPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-5 text-slate-100">
-      {/* Màn chúc mừng lên cấp (<2s), hiển thị trên cùng không chặn thao tác */}
       {mode === 'dungeon' && dungeonUi.levelUpCelebration && (
         <LevelUpBanner
           celebration={dungeonUi.levelUpCelebration}
@@ -236,7 +222,6 @@ export default function PlayPage() {
       )}
 
       <div className="mx-auto max-w-6xl space-y-4">
-        {/* Thanh tiêu đề + Chuyển chế độ + Bật/tắt tiếng + Trạng thái giảm hiệu ứng + Debug */}
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-5 py-3">
           <div className="flex flex-wrap items-center gap-3">
             <div>
@@ -288,7 +273,6 @@ export default function PlayPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Nút bật/tắt âm thanh Web Audio API */}
             <button
               type="button"
               onClick={handleToggleSound}
@@ -328,7 +312,7 @@ export default function PlayPage() {
           </div>
         </header>
 
-        {/* Thanh Debug riêng cho Dungeon Run */}
+        {/* Thanh Debug Dungeon: thêm góc/chỉ số hiện tại, độ vào tư thế & tỷ lệ vai/thân */}
         {SHOW_DEBUG_TOOLS && debugOpen && mode === 'dungeon' && (
           <section className="rounded-2xl border border-sky-500/40 bg-slate-900/95 p-4 font-mono text-xs text-slate-200">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -367,17 +351,13 @@ export default function PlayPage() {
               </div>
             </div>
 
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
               <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
                 <div className="font-sans text-[11px] text-slate-400">
                   {dungeonDebugTexts.seedLabel}
                 </div>
                 <div className="mt-0.5 text-sm font-bold text-white">
-                  {dungeonUi.dungeon.seed} (
-                  {dungeonUi.dungeon.isFixedSeed
-                    ? debugTexts.seedFixedTag
-                    : debugTexts.seedRandomTag}
-                  )
+                  {dungeonUi.dungeon.seed}
                 </div>
               </div>
 
@@ -396,7 +376,7 @@ export default function PlayPage() {
                 </div>
                 <div className="mt-0.5 text-sm font-bold text-emerald-300">
                   {dungeonUi.summary
-                    ? `+${dungeonUi.summary.officialXp} ${i18n.dungeon.xpUnit} (${dungeonUi.summary.verdict})`
+                    ? `+${dungeonUi.summary.officialXp} (${dungeonUi.summary.verdict})`
                     : dungeonDebugTexts.pendingOfficial}
                 </div>
               </div>
@@ -409,6 +389,34 @@ export default function PlayPage() {
                   {dungeonUi.frameCheck.stableOk
                     ? i18n.play.practice.frameCheck.readyBadge
                     : dungeonUi.frameCheck.stableReason ?? 'NO_POSE'}
+                  {dungeonUi.frameCheck.torsoHeightRatio !== null
+                    ? ` (H:${dungeonUi.frameCheck.torsoHeightRatio.toFixed(2)})`
+                    : ''}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                <div className="font-sans text-[11px] text-slate-400">
+                  {dungeonDebugTexts.liveMetricLabel}
+                </div>
+                <div className="mt-0.5 text-sm font-bold text-sky-300">
+                  {dungeonUi.liveMetric !== null
+                    ? dungeonUi.isAngleExercise
+                      ? `${dungeonUi.liveMetric.toFixed(1)}° / ${dungeonUi.peakThreshold.toFixed(1)}°`
+                      : `${dungeonUi.liveMetric.toFixed(2)} → ${dungeonUi.peakThreshold.toFixed(2)}`
+                    : '—'}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                <div className="font-sans text-[11px] text-slate-400">
+                  {dungeonDebugTexts.liveHoldLabel}
+                </div>
+                <div className="mt-0.5 text-sm font-bold text-emerald-300">
+                  {Math.round(dungeonUi.movementProgress * 100)}%
+                  {dungeonUi.targetHoldMs > 0
+                    ? ` · ${(dungeonUi.currentHoldMs / 1000).toFixed(1)}s`
+                    : ''}
                 </div>
               </div>
             </div>
@@ -435,7 +443,6 @@ export default function PlayPage() {
           </section>
         )}
 
-        {/* Thông báo tải / lỗi mô hình AI */}
         {!isShowingSummary && status === 'loading' && (
           <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-300">
             <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
@@ -463,7 +470,7 @@ export default function PlayPage() {
           </div>
         )}
 
-        {/* ═══════════════════════ CHẾ ĐỘ 1: DUNGEON RUN (F5a + F5b) ═══════════════════════ */}
+        {/* ═══════════════════════ CHẾ ĐỘ 1: DUNGEON RUN ═══════════════════════ */}
         {mode === 'dungeon' &&
           (dungeonUi.summary ? (
             <RunSummary
@@ -636,7 +643,6 @@ export default function PlayPage() {
                   </p>
                 </div>
 
-                {/* Cột phải: Mục tiêu phụ, Thử thách sống, Nhân vật (Cosmetic + Chỉ số + Kỹ năng) */}
                 <aside className="flex flex-col gap-4">
                   <SideObjectivesCard
                     objectives={dungeonUi.dungeon.sideObjectives}
@@ -667,7 +673,7 @@ export default function PlayPage() {
             </div>
           ))}
 
-        {/* ═══════════════════════ CHẾ ĐỘ 2: LUYỆN TẬP TỰ DO (F3 + F4) ═══════════════════════ */}
+        {/* ═══════════════════════ CHẾ ĐỘ 2: LUYỆN TẬP TỰ DO ═══════════════════════ */}
         {mode === 'practice' && (
           <div className="space-y-4">
             <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-5 py-3.5">

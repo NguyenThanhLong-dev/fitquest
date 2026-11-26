@@ -28,7 +28,6 @@ export interface MonsterStageProps {
   frameReady: boolean;
   hintText: string;
   hintTone: ProgressTone;
-  /** True khi hệ điều hành bật prefers-reduced-motion hoặc FPS < 20. */
   reducedFx: boolean;
   breatherRemainingMs: number;
   breatherTip: string | null;
@@ -81,13 +80,9 @@ const HINT_TONE_STYLES: Record<ProgressTone, string> = {
 };
 
 /**
- * Sân đấu quái vật Hầm Ngục (F5a + lớp trình bày F5b):
- * - Rung nhẹ khi trúng đòn, quái nhấp nháy, số sát thương bay lên, tia sáng + "CHÍ MẠNG!".
- * - Thanh Combo rõ nét + câu cổ vũ vui ở mốc x5, x10.
- * - Nhãn "Đòn cuối!" khi quái chỉ còn 1 đòn là gục.
- * - Màn vào Boss, thanh HP Boss lớn, đòn kết liễu Boss làm chậm 0,5s.
- * - Màn "Nghỉ lấy hơi" 4s giữa các quái kèm gợi ý uống nước / chỉnh tư thế.
- * - Tự tắt rung & hiệu ứng nặng khi `reducedFx === true`.
+ * Sân đấu quái vật Hầm Ngục:
+ * - Với bài giữ (side_bend, neck_tilt, overhead_reach): hiển thị CẢ thanh "Độ vào tư thế giữ" (0-100%)
+ *   lẫn thanh "Nạp lực tung đòn" (đếm thời gian giữ 1.5s / 2.0s) để thấy ngay phản hồi khi nghiêng/vươn.
  */
 export function MonsterStage({
   dungeon,
@@ -121,7 +116,6 @@ export function MonsterStage({
   const visual = MONSTER_VISUALS[monster.exercise];
   const isHold = targetHoldMs > 0;
 
-  // Bật rung nhẹ & nhấp nháy quái đúng theo nhịp mỗi đòn (không remount toàn thẻ)
   const [impactState, setImpactState] = useState<'none' | 'normal' | 'crit'>(
     'none'
   );
@@ -145,10 +139,13 @@ export function MonsterStage({
     Math.min(100, Math.round((monster.hp / Math.max(1, monster.maxHp)) * 100))
   );
   const chargePercent = Math.max(0, Math.min(100, Math.round(ringProgress * 100)));
+  const reachPercent = Math.max(
+    0,
+    Math.min(100, Math.round(movementProgress * 100))
+  );
   const xpPercent = Math.round(xpInfo.progressRatio * 100);
   const xpToNext = Math.max(0, xpInfo.nextLevelXp - xpInfo.xp);
 
-  // Tiến độ thanh Combo hướng tới mốc 5 rồi mốc 10
   const comboTarget = dungeon.combo < 5 ? 5 : 10;
   const comboProgressPct = Math.min(
     100,
@@ -213,7 +210,7 @@ export function MonsterStage({
         )}
       </div>
 
-      {/* Thẻ sân đấu quái vật chính (rung nhẹ khi đánh trúng) */}
+      {/* Thẻ sân đấu quái vật chính */}
       <div
         className={`relative overflow-hidden rounded-2xl border p-5 shadow-2xl bg-gradient-to-br ${visual.accentClass} ${
           monster.isBoss
@@ -221,7 +218,6 @@ export function MonsterStage({
             : 'border-slate-700/80'
         } ${shakeClass}`}
       >
-        {/* Tia sáng chí mạng phía sau khi tung đòn >= 0.9 chất lượng */}
         {!reducedFx && activeHit?.isCrit && (
           <div
             key={`rays-${hitSeq}`}
@@ -249,7 +245,6 @@ export function MonsterStage({
               </span>
             </div>
 
-            {/* Thanh Combo nổi bật hướng tới mốc x5 / x10 */}
             <div
               className={`min-w-[175px] rounded-xl border px-3 py-2 ${
                 dungeon.combo >= 10
@@ -287,7 +282,6 @@ export function MonsterStage({
             </div>
           </div>
 
-          {/* Câu cổ vũ ngắn, vui ở mốc Combo x5 / x10 */}
           {comboCheer && (
             <div className="fq-combo-pop mt-3 rounded-xl border border-amber-400/60 bg-amber-500/20 px-4 py-2 text-center text-sm font-extrabold text-amber-100">
               🔥 {texts.comboCheers[comboCheer]}
@@ -312,7 +306,7 @@ export function MonsterStage({
             ))}
           </div>
 
-          {/* Hình quái (nhấp nháy khi trúng đòn) + Số sát thương bay lên */}
+          {/* Hình quái + Tên + Số sát thương bay lên */}
           <div className="relative mt-5 flex flex-wrap items-center gap-4">
             <div
               className={`relative flex shrink-0 items-center justify-center rounded-2xl border-2 bg-slate-950/75 shadow-inner ${
@@ -351,7 +345,6 @@ export function MonsterStage({
               </p>
             </div>
 
-            {/* Số sát thương & +XP bay lên ngay bên cạnh quái */}
             {activeHit && (
               <div
                 key={`float-${hitSeq}`}
@@ -379,7 +372,7 @@ export function MonsterStage({
             )}
           </div>
 
-          {/* Thanh HP quái (Boss có thanh HP lớn nổi bật + nhãn "Đòn cuối!" khi còn 1 đòn) */}
+          {/* Thanh HP quái */}
           <div className="mt-5 space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -422,38 +415,56 @@ export function MonsterStage({
             </div>
           </div>
 
-          {/* Thanh Nạp lực (bài giữ) hoặc Nhịp tung đòn (bài động) */}
-          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/75 p-3.5">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
-              <span>{isHold ? texts.chargeBarLabel : texts.repProgressLabel}</span>
-              <span className="font-mono text-base font-bold text-sky-300">
-                {isHold
-                  ? `${(currentHoldMs / 1000).toFixed(1)}s / ${(targetHoldMs / 1000).toFixed(1)}s`
-                  : `${chargePercent}%`}
-              </span>
-            </div>
-
-            <div className="mt-2 h-3.5 w-full overflow-hidden rounded-full bg-slate-800">
-              <div
-                className={`h-full rounded-full transition-[width] duration-100 ease-linear ${
-                  !frameReady
-                    ? 'bg-amber-500/60'
-                    : chargePercent >= 100
-                      ? 'bg-emerald-400'
-                      : 'bg-sky-400'
-                }`}
-                style={{ width: `${chargePercent}%` }}
-              />
-            </div>
-
+          {/* Thanh tiến độ động tác + Thanh Nạp lực đếm giây giữ */}
+          <div className="mt-4 space-y-3 rounded-xl border border-slate-800 bg-slate-950/75 p-3.5">
             {isHold && (
-              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                <span>{i18n.play.practice.reachPoseBarLabel}</span>
-                <span className="font-mono text-slate-200">
-                  {Math.round(movementProgress * 100)}%
-                </span>
+              <div>
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+                  <span>{i18n.play.practice.reachPoseBarLabel}</span>
+                  <span className="font-mono text-sm font-bold text-emerald-300">
+                    {reachPercent}%
+                  </span>
+                </div>
+                <div className="mt-1.5 h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-100 ease-linear ${
+                      !frameReady
+                        ? 'bg-amber-500/60'
+                        : reachPercent >= 100
+                          ? 'bg-emerald-400'
+                          : 'bg-sky-400'
+                    }`}
+                    style={{ width: `${reachPercent}%` }}
+                  />
+                </div>
               </div>
             )}
+
+            <div>
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+                <span>
+                  {isHold ? texts.chargeBarLabel : texts.repProgressLabel}
+                </span>
+                <span className="font-mono text-base font-bold text-sky-300">
+                  {isHold
+                    ? `${(currentHoldMs / 1000).toFixed(1)}s / ${(targetHoldMs / 1000).toFixed(1)}s`
+                    : `${chargePercent}%`}
+                </span>
+              </div>
+
+              <div className="mt-1.5 h-3.5 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-100 ease-linear ${
+                    !frameReady
+                      ? 'bg-amber-500/60'
+                      : chargePercent >= 100
+                        ? 'bg-emerald-400'
+                        : 'bg-amber-400'
+                  }`}
+                  style={{ width: `${chargePercent}%` }}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Gợi ý form to, rõ ngay trong sân đấu */}
@@ -463,7 +474,7 @@ export function MonsterStage({
             {hintText}
           </div>
 
-          {/* Nút điều khiển lượt: Tạm dừng, Đổi quái (1 lần miễn phí), Kết thúc lượt */}
+          {/* Nút điều khiển lượt */}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -501,7 +512,7 @@ export function MonsterStage({
           </div>
         </div>
 
-        {/* Lớp phủ 1: Nghỉ lấy hơi 4s giữa các quái (gợi ý uống nước, chỉnh lại tư thế) */}
+        {/* Lớp phủ 1: Nghỉ lấy hơi 4s giữa các quái */}
         {dungeon.phase === 'transitioning' && breatherRemainingMs > 0 && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950/90 p-6 text-center backdrop-blur-sm">
             <span className="rounded-full border border-emerald-400/50 bg-emerald-500/20 px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-emerald-200">

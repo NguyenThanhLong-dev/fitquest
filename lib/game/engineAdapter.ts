@@ -1,6 +1,6 @@
 /**
  * File nối DUY NHẤT giữa tầng game (lib/game/) và lõi pose-engine.ts.
- * Giữ nguyên toàn bộ logic F5a và re-export thêm kiểu `Rarity` của engine cho phần thưởng cosmetic F5b.
+ * Giữ nguyên toàn bộ API F5a/F5b và nối thêm API bảng xếp hạng + thưởng tuần cho F7.
  */
 import {
   CONFIG,
@@ -8,14 +8,20 @@ import {
   SessionGuard,
   finalizeRun,
   levelFromXp,
+  makeMockPlayers,
   makeRng,
   newSeed,
+  rankOf,
+  rewardForRank,
+  weeklyScore,
   xpForLevel,
   type ExerciseDef,
   type ExerciseId,
+  type MockPlayer,
   type Rarity,
   type RepResult,
   type RepSummary,
+  type Reward,
   type RunInput,
   type RunResult,
   type Verdict,
@@ -24,9 +30,11 @@ import {
 export type {
   ExerciseDef,
   ExerciseId,
+  MockPlayer,
   Rarity,
   RepResult,
   RepSummary,
+  Reward,
   RunInput,
   RunResult,
   Verdict,
@@ -69,6 +77,26 @@ export function getLevelFromXp(xp: number): number {
 /** Tính mốc XP tích lũy để đạt một cấp độ bằng đúng xpForLevel() của engine. */
 export function getXpForLevel(level: number): number {
   return xpForLevel(level);
+}
+
+/** Sinh danh sách người chơi giả (mặc định 20) bằng đúng makeMockPlayers() của engine. */
+export function getMockPlayers(seed?: number, n?: number): MockPlayer[] {
+  return makeMockPlayers(seed, n);
+}
+
+/** Tính điểm tuần bằng đúng weeklyScore(verifiedXp, activeDays) của engine. */
+export function getWeeklyScore(verifiedXp: number, activeDays: number): number {
+  return weeklyScore(verifiedXp, activeDays);
+}
+
+/** Tính hạng 1-based của người chơi bằng đúng rankOf(score, others) của engine. */
+export function getRankOf(score: number, others: number[]): number {
+  return rankOf(score, others);
+}
+
+/** Lấy phần thưởng tuần theo hạng bằng đúng rewardForRank(rank, total) của engine. */
+export function getRewardForRank(rank: number, total: number): Reward {
+  return rewardForRank(rank, total);
 }
 
 /**

@@ -8,8 +8,8 @@ import type {
 import type { CosmeticItemId, CosmeticSlot } from '@/lib/game/cosmetics';
 
 /**
- * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a + F5b).
- * Giữ nguyên toàn bộ khóa cũ và bổ sung chuỗi trình bày + phần thưởng cosmetic F5b.
+ * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a + F5b + F7).
+ * Cập nhật rõ yêu cầu khớp vai–hông cho bài Nghiêng người (side_bend) và bổ sung nhãn Debug góc Dungeon.
  */
 export const i18n = {
   // ── F1: Metadata toàn cục ──
@@ -19,7 +19,7 @@ export const i18n = {
       'RPG vận động 5–10 phút tại bàn học cho sinh viên IT, kiểm chứng động tác bằng camera ngay trên máy.',
   },
 
-  // ── F1 + F5a + F5b: Trang chủ (app/page.tsx) ──
+  // ── F1 + F5a + F5b + F7: Trang chủ (app/page.tsx) ──
   home: {
     title: 'FitQuest',
     dungeonTag: 'Hầm Ngục Vận Động · Local AI',
@@ -30,6 +30,7 @@ export const i18n = {
     namePlaceholder: 'Nhập tên của bạn...',
     startButton: 'Bắt đầu Dungeon Run',
     practiceButton: 'Chế độ luyện tập tự do',
+    leaderboardButton: 'Bảng xếp hạng tuần (Demo)',
     privacyNote: 'Video không bao giờ rời khỏi máy bạn.',
     reloadLossNotice: 'Tải lại trang sẽ mất tiến độ',
     levelPrefix: 'Cấp',
@@ -102,6 +103,7 @@ export const i18n = {
       formHintLabel: 'Gợi ý form theo thời gian thực',
       bodyScopeFull: 'Cần thấy thân & chân',
       bodyScopeSquat: 'Chỉ cần thấy vai, hông và gối (không cần cổ chân)',
+      bodyScopeTorso: 'Cần thấy rõ cả vai và hông (lùi nhẹ nếu bị khuất hông)',
       bodyScopeUpper: 'Chỉ cần thấy thân trên',
       holdUnit: 's',
 
@@ -110,7 +112,8 @@ export const i18n = {
         holding: 'Giữ nguyên tư thế...',
         holdComplete: 'Đã tính rep! Thả lỏng về tư thế nghỉ để tập rep tiếp theo',
         awaitingRest: 'Đã xong rep — hãy thả lỏng về tư thế nghỉ trước khi tập tiếp',
-        startFromRest: 'Hãy về tư thế nghỉ trước khi bắt đầu giữ',
+        startFromRest:
+          'Hãy đứng/ngồi thẳng về tư thế nghỉ 1 nhịp rồi mới vào động tác giữ',
         repCancelledTitle: 'Rep đang tập đã bị hủy',
         poseLostTitle: 'Tạm dừng đếm (khung hình chưa đạt)',
         challengePaused: 'Đang tạm dừng đếm rep để thực hiện thử thách sống...',
@@ -151,9 +154,10 @@ export const i18n = {
         },
         side_bend: {
           name: 'Nghiêng người',
-          meta: 'Thân trên · Giữ 1,5s',
-          scope: 'upper',
-          readyCue: 'Tư thế tốt — nghiêng người nhẹ sang một bên và giữ liên tục 1,5 giây',
+          meta: 'Vai–hông · Giữ 1,5s',
+          scope: 'torso',
+          readyCue:
+            'Đứng/ngồi thẳng rõ cả vai và hông, sau đó nghiêng thân sang bên giữ 1,5 giây',
           depthCue: 'Nghiêng người thêm một chút',
           peakCue: 'Giữ nguyên tư thế nghiêng...',
           notDeepEnough: 'Nghiêng người thêm một chút',
@@ -181,7 +185,7 @@ export const i18n = {
         {
           name: string;
           meta: string;
-          scope: 'full' | 'squat' | 'upper';
+          scope: 'full' | 'squat' | 'torso' | 'upper';
           readyCue: string;
           depthCue: string;
           peakCue: string;
@@ -217,9 +221,9 @@ export const i18n = {
         reasons: {
           NO_POSE: 'Không thấy người trong khung hình. Hãy ngồi hoặc đứng vào trước camera.',
           LOW_VISIBILITY:
-            'Thiếu khớp bắt buộc (độ tin cậy < 0,6). Hãy bật thêm đèn và để lộ rõ các khớp cần kiểm tra.',
+            'Thiếu khớp bắt buộc (độ tin cậy < 0,6). Hãy bật thêm đèn và để lộ rõ các khớp cần kiểm tra (ví dụ: vai và hông).',
           OUT_OF_FRAME:
-            'Khớp bắt buộc đang sát mép hoặc ra ngoài khung hình. Hãy căn lại vị trí ở giữa khung.',
+            'Khớp bắt buộc đang sát mép hoặc ra ngoài khung hình. Hãy lùi nhẹ và căn lại vị trí ở giữa khung.',
           TOO_FAR:
             'Bạn đang đứng quá xa camera (thân quá nhỏ trong khung). Hãy tiến lại gần hơn.',
           TOO_CLOSE:
@@ -383,7 +387,8 @@ export const i18n = {
         'Lượt không hợp lệ (rejected) — không nhận được rương chiến lợi phẩm.',
       inventoryTitle: 'Trang bị Cosmetic (RAM)',
       inventoryEmpty:
-        'Chưa có vật phẩm. Hoàn thành Dungeon Run để mở rương!',
+        'Chưa có vật phẩm. Hoàn thành Dungeon Run hoặc nhận thưởng tuần để mở!',
+      weeklyRewardTag: 'Thưởng tuần · Cosmetic',
       equipButton: 'Trang bị',
       unequipButton: 'Tháo',
       equippedBadge: 'Đang dùng',
@@ -445,7 +450,7 @@ export const i18n = {
       side_bend: {
         name: 'Rắn Lắc',
         bossName: 'Mãnh Xà Bóng Đêm',
-        actionLabel: 'Nghiêng người giữ 1,5s để né độc',
+        actionLabel: 'Nghiêng người giữ 1,5s để né độc (cần thấy rõ vai & hông)',
       },
       neck_tilt: {
         name: 'Bóng Ma Cứng Cổ',
@@ -563,6 +568,7 @@ export const i18n = {
       reasonsTitle: 'Chi tiết kiểm định chống gian lận',
       noReasonsText: 'Không phát hiện bất thường nào.',
       playAgainButton: 'Chơi lượt mới',
+      leaderboardButton: 'Xem bảng xếp hạng tuần',
       backHomeButton: 'Về trang chủ',
     },
 
@@ -576,6 +582,86 @@ export const i18n = {
       officialXpLabel: 'XP finalizeRun',
       pendingOfficial: 'Chờ kết thúc lượt',
       swapsLabel: 'Lượt Đổi quái còn lại',
+      liveMetricLabel: 'Chỉ số / Ngưỡng hiện tại',
+      liveHoldLabel: 'Vào tư thế / Giữ',
     },
+  },
+
+  // ── F7: Bảng xếp hạng minh họa & Thưởng tuần ──
+  leaderboard: {
+    title: 'Bảng xếp hạng tuần',
+    demoBannerBadge: 'Dữ liệu minh họa (demo data)',
+    demoBannerDesc:
+      '20 đối thủ có biểu tượng 🤖 là người chơi giả tạo cục bộ theo seed cố định để minh họa xếp hạng.',
+    backHome: 'Trang chủ',
+    goPlay: 'Vào Dungeon Run',
+    defaultPlayerName: 'Bạn (Hiệp sĩ IT)',
+    youBadge: 'BẠN',
+    demoBadge: 'Demo',
+    pointsUnit: 'điểm',
+
+    unranked: {
+      title: 'Bạn chưa có điểm tuần này',
+      desc: 'Hoàn thành ít nhất 1 lượt Dungeon Run hợp lệ (verified) để ghi tên lên bảng xếp hạng và mở khóa thưởng tuần nhé!',
+      ctaButton: 'Bắt đầu Dungeon Run ngay',
+      noteReview: 'Lưu ý: chỉ phiên đã xác thực (verified) mới cộng điểm tuần.',
+    },
+
+    status: {
+      rankLabel: 'Hạng hiện tại',
+      scoreLabel: 'Điểm tuần',
+      verifiedXpLabel: 'XP verified tuần',
+      activeDaysLabel: 'Ngày hoạt động',
+      demoDayPrefix: 'Ngày demo:',
+      gapPrefix: 'Còn',
+      gapMiddle: 'điểm để vượt',
+      topRankMessage: 'Bạn đang dẫn đầu bảng xếp hạng tuần! Giữ phong độ nhé!',
+      rankEnteredBadge: 'Vừa ghi danh vào bảng xếp hạng!',
+      rankUpPrefix: 'Tăng',
+      rankUpSuffix: 'hạng!',
+      rankShiftPrefix: 'Hạng mới #',
+      rankShiftSuffix: '— tiếp tục giữ nhịp nhé!',
+    },
+
+    controls: {
+      nextDemoDayButton: 'Sang ngày mới (demo)',
+      simulateWeekendButton: 'Mô phỏng cuối tuần',
+      weekendClaimedButton: 'Đã nhận thưởng tuần này',
+      resetWeekButton: 'Đặt lại tuần',
+      needScoreHint: 'Cần có điểm từ ít nhất 1 phiên verified để mô phỏng nhận thưởng cuối tuần.',
+    },
+
+    table: {
+      rankCol: 'Hạng',
+      playerCol: 'Người chơi',
+      scoreCol: 'Điểm tuần',
+    },
+
+    rewardModal: {
+      badge: 'Tổng kết cuối tuần (Demo)',
+      title: 'Chúc mừng nhận thưởng tuần!',
+      rankPrefix: 'Hạng chung cuộc:',
+      cosmeticOnlyNote:
+        'Lưu ý: Phần thưởng tuần chỉ mang tính trang trí (cosmetic), không tăng XP hay sát thương. Vật phẩm đã được thêm vào kho trang bị nhân vật (RAM).',
+      closeButton: 'Đóng & xem bảng',
+      goPlayButton: 'Vào Dungeon Run',
+    },
+
+    debug: {
+      toggleShowButton: 'Hiện Debug',
+      toggleHideButton: 'Ẩn Debug',
+      title: 'Debug Bảng xếp hạng (F7)',
+      addXpButton: 'Cộng nhanh 300 XP verified',
+      changeSeedButton: 'Đổi seed demo',
+      resetSeedButton: 'Seed mặc định (2026)',
+      seedLabel: 'Seed demo',
+      weeklyScoreLabel: 'Điểm tuần',
+      weeklyXpLabel: 'XP verified tuần',
+      activeDaysLabel: 'Ngày hoạt động (tính / thực)',
+      currentDayLabel: 'Ngày demo hiện tại',
+    },
+
+    honestDisclaimer:
+      'Bản prototype: bảng xếp hạng chạy trên trình duyệt, không có máy chủ nên không chống gian lận tuyệt đối.',
   },
 } as const;

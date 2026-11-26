@@ -2,15 +2,23 @@
 
 import Link from 'next/link';
 import { useGameStore } from '@/lib/game/store';
-import { getXpProgressInfo } from '@/lib/game/engineAdapter';
+import { getXpProgressInfo, type Rarity } from '@/lib/game/engineAdapter';
 import { COSMETIC_BY_ID } from '@/lib/game/cosmetics';
 import { unlockGameAudio } from '@/lib/game/sound';
 import { i18n } from '@/lib/i18n';
 
+const WEEKLY_REWARD_ICONS: Record<Rarity, string> = {
+  common: '🎖️',
+  rare: '🛡️',
+  epic: '⚔️',
+  legendary: '👑',
+};
+
 /**
- * Trang chủ ("/") — Phong cách Hầm Ngục tối màu (F5b):
+ * Trang chủ ("/") — Phong cách Hầm Ngục tối màu (F5b + link Bảng xếp hạng tuần F7):
  * - Tiêu đề FitQuest, câu cốt truyện "Hang động Cứng Cổ đang chờ bạn…",
- *   nút "Bắt đầu Dungeon Run" nổi bật, nút luyện tập tự do và nhắc "Tải lại trang sẽ mất tiến độ".
+ *   nút "Bắt đầu Dungeon Run" nổi bật, nút luyện tập tự do và nút sang /leaderboard.
+ * - Hiển thị trạng thái nhân vật tạm trong RAM (cấp độ, XP, trang bị & huy hiệu thưởng tuần).
  */
 export default function HomePage() {
   const displayName = useGameStore((state) => state.displayName);
@@ -18,6 +26,10 @@ export default function HomePage() {
   const totalXp = useGameStore((state) => state.totalXp);
   const cosmeticInventory = useGameStore((state) => state.cosmeticInventory);
   const equippedCosmetics = useGameStore((state) => state.equippedCosmetics);
+  const weeklyRewards = useGameStore((state) => state.weeklyRewards);
+  const equippedWeeklyRewardId = useGameStore(
+    (state) => state.equippedWeeklyRewardId
+  );
 
   const xpInfo = getXpProgressInfo(totalXp);
   const equippedTitle = equippedCosmetics.title
@@ -29,6 +41,10 @@ export default function HomePage() {
   const equippedFrame = equippedCosmetics.frame
     ? COSMETIC_BY_ID[equippedCosmetics.frame]
     : null;
+  const equippedWeeklyReward =
+    weeklyRewards.find((r) => r.id === equippedWeeklyRewardId) ?? null;
+
+  const totalCosmeticCount = cosmeticInventory.length + weeklyRewards.length;
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/70 px-4 py-10 text-slate-100">
@@ -64,7 +80,7 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* Trạng thái nhân vật tạm trong RAM (Cấp độ, XP, trang bị đang mặc) */}
+        {/* Trạng thái nhân vật tạm trong RAM (Cấp độ, XP, trang bị & thưởng tuần đang mặc) */}
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/85 px-4 py-3">
           <div className="flex items-center gap-3">
             <div
@@ -76,28 +92,36 @@ export default function HomePage() {
               {equippedSkin ? equippedSkin.icon : '🛡️'}
             </div>
             <div>
-              <div className="text-xs font-semibold text-slate-300">
-                {i18n.home.levelPrefix}{' '}
-                <strong className="font-mono text-base text-emerald-400">
-                  {xpInfo.level}
-                </strong>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold text-slate-300">
+                <span>
+                  {i18n.home.levelPrefix}{' '}
+                  <strong className="font-mono text-base text-emerald-400">
+                    {xpInfo.level}
+                  </strong>
+                </span>
                 {equippedTitle && (
-                  <span className="ml-2 text-amber-300">
+                  <span className="text-amber-300">
                     {equippedTitle.icon}{' '}
                     {i18n.dungeon.loot.items[equippedTitle.id]}
+                  </span>
+                )}
+                {equippedWeeklyReward && (
+                  <span className="text-amber-200">
+                    {WEEKLY_REWARD_ICONS[equippedWeeklyReward.rarity]}{' '}
+                    {equippedWeeklyReward.name}
                   </span>
                 )}
               </div>
               <div className="text-[11px] text-slate-400">
                 {i18n.home.cosmeticCountPrefix}{' '}
                 <span className="font-mono text-slate-200">
-                  {cosmeticInventory.length}
+                  {totalCosmeticCount}
                 </span>
               </div>
             </div>
           </div>
 
-          <span className="font-mono text-xs font-bold text-slate-200">
+          <span className="shrink-0 font-mono text-xs font-bold text-slate-200">
             {xpInfo.xp} / {xpInfo.cap} {i18n.home.xpUnit}
           </span>
         </div>
@@ -121,7 +145,7 @@ export default function HomePage() {
           />
         </div>
 
-        {/* Nút Bắt đầu Dungeon Run nổi bật + nút Chế độ luyện tập tự do */}
+        {/* Nút Bắt đầu Dungeon Run + Bảng xếp hạng tuần (Demo) + Chế độ luyện tập tự do */}
         <div className="space-y-2.5">
           <Link
             href="/play"
@@ -131,13 +155,23 @@ export default function HomePage() {
             ⚔️ {i18n.home.startButton}
           </Link>
 
-          <Link
-            href="/play?mode=practice"
-            onClick={unlockGameAudio}
-            className="block w-full rounded-xl border border-slate-700 bg-slate-950/80 px-5 py-2.5 text-center text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
-          >
-            {i18n.home.practiceButton}
-          </Link>
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <Link
+              href="/leaderboard"
+              onClick={unlockGameAudio}
+              className="block w-full rounded-xl border border-amber-400/50 bg-amber-500/15 px-4 py-2.5 text-center text-sm font-bold text-amber-200 transition hover:bg-amber-500/25"
+            >
+              🏆 {i18n.home.leaderboardButton}
+            </Link>
+
+            <Link
+              href="/play?mode=practice"
+              onClick={unlockGameAudio}
+              className="block w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-center text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
+            >
+              {i18n.home.practiceButton}
+            </Link>
+          </div>
         </div>
 
         {/* Ghi chú quyền riêng tư và cảnh báo không lưu dữ liệu */}
