@@ -5,7 +5,7 @@
  * Input : MediaPipe PoseLandmarker landmarks (33 points, normalized 0..1) per video frame.
  * Output: counted reps with quality score, anti-cheat flags, run verdict, XP, demo leaderboard helpers.
  *
- * All numeric thresholds are TUNABLE: calibrate them with real recordings (see AGENT_SPEC.md, task F6).
+ * All numeric thresholds are declared in THRESHOLDS / CONFIG at the top of the file for easy calibration.
  */
 
 // ───────────────────────────── Types ─────────────────────────────
@@ -19,6 +19,63 @@ export const LM = {
   NOSE: 0, L_EAR: 7, R_EAR: 8,
   L_SHOULDER: 11, R_SHOULDER: 12, L_ELBOW: 13, R_ELBOW: 14, L_WRIST: 15, R_WRIST: 16,
   L_HIP: 23, R_HIP: 24, L_KNEE: 25, R_KNEE: 26, L_ANKLE: 27, R_ANKLE: 28,
+} as const;
+
+// ───────────────────────────── Tunable Exercise Thresholds ─────────────────────────────
+/** Toàn bộ ngưỡng động tác và dung sai phụ (đặt tên rõ ràng để dễ hiệu chỉnh). */
+export const THRESHOLDS = {
+  // Quy tắc chung cho các động tác giữ (overhead_reach, side_bend, neck_tilt)
+  HOLD_START_PROGRESS: 0.30,       // vượt mức này từ tư thế nghỉ mới bắt đầu 1 rep giữ
+  HOLD_REARM_PROGRESS: 0.20,       // phải quay về <= 0.20 (hysteresis) mới mở khóa rep kế tiếp
+  HOLD_KEEP_PROGRESS: 0.85,        // giữ liên tục khi progress >= 0.85; rơi xuống dưới -> đồng hồ giữ về 0
+  HOLD_COOLDOWN_MS: 600,           // thời gian chờ tối thiểu giữa 2 rep giữ liên tiếp (chống đếm đúp)
+  HOLD_MAX_VELOCITY: 5.5,          // tốc độ tối đa cho pha vào tư thế của bài giữ (progress/s)
+
+  // Squat (chỉ dùng vai–hông–gối, bỏ cổ chân/bàn chân)
+  SQUAT_REST: 0.75,
+  SQUAT_PEAK: 0.30,
+  SQUAT_MIN_REP_MS: 1200,
+  SQUAT_MAX_REP_MS: 8000,
+  SQUAT_TORSO_MAX_DEG: 50,
+  SQUAT_TORSO_PENALTY: 0.25,
+  SQUAT_HIP_TILT_MAX_DEG: 10,
+  SQUAT_HIP_PENALTY: 0.2,
+
+  // Vươn vai (overhead_reach — giữ liên tục 2s)
+  OVERHEAD_REST: -0.5,
+  OVERHEAD_PEAK: 0.3,
+  OVERHEAD_HOLD_MS: 2000,
+  OVERHEAD_MIN_REP_MS: 2150,
+  OVERHEAD_MAX_REP_MS: 15000,
+  OVERHEAD_WRISTS_PENALTY: 0.4,
+  OVERHEAD_SHOULDER_TILT_MAX_DEG: 14,
+  OVERHEAD_SHOULDER_PENALTY: 0.2,
+
+  // Nghiêng người (side_bend — giữ liên tục 1,5s; đã giảm độ khó góc & nới dung sai hông)
+  SIDE_BEND_REST_DEG: 3,
+  SIDE_BEND_PEAK_DEG: 12,
+  SIDE_BEND_HOLD_MS: 1500,
+  SIDE_BEND_MIN_REP_MS: 1650,
+  SIDE_BEND_MAX_REP_MS: 15000,
+  SIDE_BEND_HIP_TILT_MAX_DEG: 16,
+  SIDE_BEND_HIP_PENALTY: 0.25,
+
+  // Nghiêng cổ (neck_tilt — giữ liên tục 2s; đo đường nối 2 tai, nới dung sai vai)
+  NECK_TILT_REST_DEG: 2.5,
+  NECK_TILT_PEAK_DEG: 10,
+  NECK_TILT_HOLD_MS: 2000,
+  NECK_TILT_MIN_REP_MS: 2150,
+  NECK_TILT_MAX_REP_MS: 15000,
+  NECK_TILT_SHOULDER_TILT_MAX_DEG: 18,
+  NECK_TILT_SHOULDER_PENALTY: 0.25,
+
+  // Nâng gối (high_knees)
+  HIGH_KNEES_REST: -0.7,
+  HIGH_KNEES_PEAK: -0.2,
+  HIGH_KNEES_MIN_REP_MS: 400,
+  HIGH_KNEES_MAX_REP_MS: 4000,
+  HIGH_KNEES_TORSO_MAX_DEG: 35,
+  HIGH_KNEES_TORSO_PENALTY: 0.3,
 } as const;
 
 // ───────────────────────────── Geometry helpers ─────────────────────────────
@@ -82,52 +139,65 @@ export interface ExerciseDef {
   form: FormCheck[];
 }
 
-const SH_HIP_SQUAT = [LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP, LM.L_KNEE, LM.R_KNEE, LM.L_ANKLE, LM.R_ANKLE];
+// Squat chỉ yêu cầu vai, hông và đầu gối (bỏ cổ chân/bàn chân để tránh lỗi khi mặc quần ống rộng)
+const SQUAT_REQUIRED = [LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP, LM.L_KNEE, LM.R_KNEE];
+const HIGH_KNEES_REQUIRED = [LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP, LM.L_KNEE, LM.R_KNEE, LM.L_ANKLE, LM.R_ANKLE];
 
 export const EXERCISES: Record<ExerciseId, ExerciseDef> = {
-  // Front-facing webcam: use vertical hip→knee gap / torso unit (robust to foreshortening, unlike 2D knee angle).
+  // Front-facing webcam: use vertical hip→knee gap / torso unit (no ankles required).
   squat: {
-    id: 'squat', name: 'Squat', required: SH_HIP_SQUAT,
+    id: 'squat', name: 'Squat', required: SQUAT_REQUIRED,
     metric: f => (mid(pt(f, LM.L_KNEE), pt(f, LM.R_KNEE)).y - hips(f).y) / unit(f),
-    rest: 0.75, peak: 0.30, holdMs: 0, minRepMs: 1200, maxRepMs: 8000, baseXp: 10,
+    rest: THRESHOLDS.SQUAT_REST, peak: THRESHOLDS.SQUAT_PEAK, holdMs: 0,
+    minRepMs: THRESHOLDS.SQUAT_MIN_REP_MS, maxRepMs: THRESHOLDS.SQUAT_MAX_REP_MS, baseXp: 10,
     form: [
-      { id: 'TORSO_UPRIGHT', penalty: 0.25, pass: f => torsoLean(f) <= 50 },
-      { id: 'HIPS_LEVEL', penalty: 0.2, pass: f => hipTilt(f) <= 10 },
+      { id: 'TORSO_UPRIGHT', penalty: THRESHOLDS.SQUAT_TORSO_PENALTY, pass: f => torsoLean(f) <= THRESHOLDS.SQUAT_TORSO_MAX_DEG },
+      { id: 'HIPS_LEVEL', penalty: THRESHOLDS.SQUAT_HIP_PENALTY, pass: f => hipTilt(f) <= THRESHOLDS.SQUAT_HIP_TILT_MAX_DEG },
     ],
   },
-  // Overhead stretch (vươn vai): both wrists above the nose, held 2s.
+  // Overhead stretch (vươn vai): both wrists above the nose, held continuously for 2s.
   overhead_reach: {
     id: 'overhead_reach', name: 'Vươn vai', required: [LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER, LM.L_WRIST, LM.R_WRIST],
     metric: f => (pt(f, LM.NOSE).y - mid(pt(f, LM.L_WRIST), pt(f, LM.R_WRIST)).y) / unit(f),
-    rest: -0.5, peak: 0.3, holdMs: 2000, minRepMs: 2500, maxRepMs: 15000, baseXp: 6,
+    rest: THRESHOLDS.OVERHEAD_REST, peak: THRESHOLDS.OVERHEAD_PEAK, holdMs: THRESHOLDS.OVERHEAD_HOLD_MS,
+    minRepMs: THRESHOLDS.OVERHEAD_MIN_REP_MS, maxRepMs: THRESHOLDS.OVERHEAD_MAX_REP_MS, baseXp: 6,
     form: [
-      { id: 'BOTH_WRISTS_UP', penalty: 0.4, pass: f => pt(f, LM.L_WRIST).y < pt(f, LM.NOSE).y && pt(f, LM.R_WRIST).y < pt(f, LM.NOSE).y },
-      { id: 'SHOULDERS_LEVEL', penalty: 0.2, pass: f => shoulderTilt(f) <= 10 },
+      { id: 'BOTH_WRISTS_UP', penalty: THRESHOLDS.OVERHEAD_WRISTS_PENALTY, pass: f => pt(f, LM.L_WRIST).y < pt(f, LM.NOSE).y && pt(f, LM.R_WRIST).y < pt(f, LM.NOSE).y },
+      { id: 'SHOULDERS_LEVEL', penalty: THRESHOLDS.OVERHEAD_SHOULDER_PENALTY, pass: f => shoulderTilt(f) <= THRESHOLDS.OVERHEAD_SHOULDER_TILT_MAX_DEG },
     ],
   },
-  // Standing side bend: torso tilt from vertical.
+  // Standing/seated side bend: torso tilt from vertical, held continuously for 1.5s.
   side_bend: {
     id: 'side_bend', name: 'Nghiêng người', required: [LM.L_SHOULDER, LM.R_SHOULDER, LM.L_HIP, LM.R_HIP],
     metric: f => torsoLean(f),
-    rest: 5, peak: 20, holdMs: 1500, minRepMs: 2500, maxRepMs: 15000, baseXp: 5,
-    form: [{ id: 'HIPS_LEVEL', penalty: 0.3, pass: f => hipTilt(f) <= 8 }],
+    rest: THRESHOLDS.SIDE_BEND_REST_DEG, peak: THRESHOLDS.SIDE_BEND_PEAK_DEG, holdMs: THRESHOLDS.SIDE_BEND_HOLD_MS,
+    minRepMs: THRESHOLDS.SIDE_BEND_MIN_REP_MS, maxRepMs: THRESHOLDS.SIDE_BEND_MAX_REP_MS, baseXp: 5,
+    form: [
+      { id: 'HIPS_LEVEL', penalty: THRESHOLDS.SIDE_BEND_HIP_PENALTY, pass: f => hipTilt(f) <= THRESHOLDS.SIDE_BEND_HIP_TILT_MAX_DEG },
+    ],
   },
-  // Neck side tilt: ear line tilts while shoulders stay level (prevents "leaning the whole body").
+  // Neck side tilt: ear line tilts while shoulders stay within relaxed tolerance, held continuously for 2s.
   neck_tilt: {
     id: 'neck_tilt', name: 'Nghiêng cổ', required: [LM.NOSE, LM.L_EAR, LM.R_EAR, LM.L_SHOULDER, LM.R_SHOULDER],
     metric: f => lineTilt(pt(f, LM.L_EAR), pt(f, LM.R_EAR)),
-    rest: 4, peak: 16, holdMs: 2000, minRepMs: 3000, maxRepMs: 15000, baseXp: 4,
-    form: [{ id: 'SHOULDERS_LEVEL', penalty: 0.4, pass: f => shoulderTilt(f) <= 8 }],
+    rest: THRESHOLDS.NECK_TILT_REST_DEG, peak: THRESHOLDS.NECK_TILT_PEAK_DEG, holdMs: THRESHOLDS.NECK_TILT_HOLD_MS,
+    minRepMs: THRESHOLDS.NECK_TILT_MIN_REP_MS, maxRepMs: THRESHOLDS.NECK_TILT_MAX_REP_MS, baseXp: 4,
+    form: [
+      { id: 'SHOULDERS_LEVEL', penalty: THRESHOLDS.NECK_TILT_SHOULDER_PENALTY, pass: f => shoulderTilt(f) <= THRESHOLDS.NECK_TILT_SHOULDER_TILT_MAX_DEG },
+    ],
   },
   // Marching / high knees: knee lifted close to hip height.
   high_knees: {
-    id: 'high_knees', name: 'Nâng gối', required: SH_HIP_SQUAT,
+    id: 'high_knees', name: 'Nâng gối', required: HIGH_KNEES_REQUIRED,
     metric: f => {
       const u = unit(f);
       return Math.max((pt(f, LM.L_HIP).y - pt(f, LM.L_KNEE).y) / u, (pt(f, LM.R_HIP).y - pt(f, LM.R_KNEE).y) / u);
     },
-    rest: -0.7, peak: -0.2, holdMs: 0, minRepMs: 400, maxRepMs: 4000, baseXp: 3,
-    form: [{ id: 'TORSO_UPRIGHT', penalty: 0.3, pass: f => torsoLean(f) <= 35 }],
+    rest: THRESHOLDS.HIGH_KNEES_REST, peak: THRESHOLDS.HIGH_KNEES_PEAK, holdMs: 0,
+    minRepMs: THRESHOLDS.HIGH_KNEES_MIN_REP_MS, maxRepMs: THRESHOLDS.HIGH_KNEES_MAX_REP_MS, baseXp: 3,
+    form: [
+      { id: 'TORSO_UPRIGHT', penalty: THRESHOLDS.HIGH_KNEES_TORSO_PENALTY, pass: f => torsoLean(f) <= THRESHOLDS.HIGH_KNEES_TORSO_MAX_DEG },
+    ],
   },
 };
 
@@ -150,8 +220,8 @@ export interface RepSummary {
 export interface RepResult extends RepSummary { startT: number; endT: number; counted: boolean; flags: RepFlag[] }
 
 export const CONFIG = {
-  startProgress: 0.15,      // leaving rest
-  endProgress: 0.15,        // returning to rest
+  startProgress: 0.15,      // leaving rest (dynamic exercises)
+  endProgress: 0.15,        // returning to rest (dynamic exercises)
   minQuality: 0.6,          // rep counts if quality >= this and no hard flag
   zigzagDeadband: 0.08,     // progress change ignored when counting direction reversals
   maxReversals: 3,          // clean rep = 1 reversal (up→down); allow some wobble
@@ -162,8 +232,13 @@ export const CONFIG = {
   xpCap: 600,               // max XP per page load (prototype has no persistence, so no real 'daily' cap)
 } as const;
 
-/** Max plausible speed in progress/second derived from the minimum rep time (sinusoidal rep ⇒ π/T, +60% margin). */
-const maxVelocity = (d: ExerciseDef) => (Math.PI / (d.minRepMs / 1000)) * 1.6;
+/**
+ * Max plausible speed in progress/second:
+ * - Dynamic exercises: sinusoidal bound π/T with +60% margin.
+ * - Hold exercises: dedicated bound for the entry transition (no lowering phase in the rep).
+ */
+export const maxVelocity = (d: ExerciseDef) =>
+  d.holdMs > 0 ? THRESHOLDS.HOLD_MAX_VELOCITY : (Math.PI / (d.minRepMs / 1000)) * 1.6;
 
 function resample(s: { t: number; p: number }[], n: number): number[] {
   const t0 = s[0].t, t1 = s[s.length - 1].t, out: number[] = [];
@@ -192,56 +267,155 @@ function countReversals(ps: number[], deadband: number): number {
   return rev;
 }
 
-export interface PushResult { gate: GateResult; progress: number | null; rep: RepResult | null }
+export interface PushResult {
+  gate: GateResult;
+  progress: number | null;
+  rep: RepResult | null;
+  /** Giá trị metric hiện tại (sau EMA) phục vụ hiển thị/debug góc và ngưỡng. */
+  metric?: number | null;
+  /** Thời gian đã giữ liên tục hiện tại (ms) cho bài giữ. */
+  holdMs?: number;
+  /** True sau khi bài giữ vừa chốt rep và đang chờ người tập thả lỏng về tư thế nghỉ. */
+  awaitingRest?: boolean;
+}
 
 export class RepCounter {
   private ema: number | null = null;
   private active = false;
-  private armed = true;
+  // Bài giữ bắt buộc khởi đầu ở vùng nghỉ (armed = false) để chống ảnh tĩnh ở sẵn tư thế đích
+  private armed: boolean;
+  private awaitingRest = false;
+  private lastCountedAt: number | null = null;
   private samples: { t: number; p: number }[] = [];
   private maxP = 0;
   private peakFrame: Frame | null = null;
   private holdStart: number | null = null;
+  private currentHold = 0;
   private bestHold = 0;
 
-  constructor(public readonly def: ExerciseDef) {}
+  constructor(public readonly def: ExerciseDef) {
+    this.armed = def.holdMs === 0;
+  }
 
+  /** Đặt lại toàn bộ trạng thái (dùng khi bấm Reset hoặc đổi động tác). */
   reset() {
-    this.ema = null; this.active = false; this.armed = true; this.samples = [];
-    this.maxP = 0; this.peakFrame = null; this.holdStart = null; this.bestHold = 0;
+    this.ema = null; this.active = false; this.armed = this.def.holdMs === 0;
+    this.awaitingRest = false; this.lastCountedAt = null;
+    this.samples = []; this.maxP = 0; this.peakFrame = null;
+    this.holdStart = null; this.currentHold = 0; this.bestHold = 0;
+  }
+
+  /** Hủy riêng rep đang dở khi mất khớp, nhưng vẫn giữ cooldown & chống ảnh tĩnh của bài giữ. */
+  private abortInProgress() {
+    this.ema = null; this.active = false; this.armed = this.def.holdMs === 0;
+    this.samples = []; this.maxP = 0; this.peakFrame = null;
+    this.holdStart = null; this.currentHold = 0; this.bestHold = 0;
   }
 
   push(f: Frame): PushResult {
     const gate = qualityGate(f, this.def.required);
-    if (!gate.ok) { this.reset(); return { gate, progress: null, rep: null }; } // pose lost ⇒ rep discarded
+    if (!gate.ok) {
+      this.abortInProgress();
+      return { gate, progress: null, rep: null, metric: null, holdMs: 0, awaitingRest: this.awaitingRest };
+    }
 
     const raw = this.def.metric(f);
     this.ema = this.ema === null ? raw : CONFIG.emaAlpha * raw + (1 - CONFIG.emaAlpha) * this.ema;
     const p = (this.ema - this.def.rest) / (this.def.peak - this.def.rest);
 
+    const isHold = this.def.holdMs > 0;
+    const startThr = isHold ? THRESHOLDS.HOLD_START_PROGRESS : CONFIG.startProgress;
+    const endThr = isHold ? THRESHOLDS.HOLD_REARM_PROGRESS : CONFIG.endProgress;
+
     if (!this.active) {
-      if (!this.armed) { if (p < CONFIG.endProgress) this.armed = true; return { gate, progress: p, rep: null }; }
-      if (p > CONFIG.startProgress) {
-        this.active = true; this.samples = [{ t: f.t, p }]; this.maxP = p; this.peakFrame = f;
-        this.holdStart = null; this.bestHold = 0;
+      if (!this.armed) {
+        const cooldownOk =
+          !isHold ||
+          this.lastCountedAt === null ||
+          f.t - this.lastCountedAt >= THRESHOLDS.HOLD_COOLDOWN_MS;
+        if (p <= endThr && cooldownOk) {
+          this.armed = true;
+          this.awaitingRest = false;
+        }
+        return { gate, progress: p, rep: null, metric: this.ema, holdMs: 0, awaitingRest: this.awaitingRest };
       }
-      return { gate, progress: p, rep: null };
+
+      if (p > startThr) {
+        this.active = true;
+        this.samples = [{ t: f.t, p }];
+        this.maxP = p;
+        this.peakFrame = f;
+        this.holdStart = isHold && p >= 1 ? f.t : null;
+        this.currentHold = 0;
+        this.bestHold = 0;
+      }
+      return { gate, progress: p, rep: null, metric: this.ema, holdMs: 0, awaitingRest: false };
     }
 
     this.samples.push({ t: f.t, p });
     if (p > this.maxP) { this.maxP = p; this.peakFrame = f; }
-    if (p >= 1) { if (this.holdStart === null) this.holdStart = f.t; this.bestHold = Math.max(this.bestHold, f.t - this.holdStart); }
-    else if (p < 0.9) this.holdStart = null;
 
+    // ── Nhánh 1: Động tác giữ (vươn vai, nghiêng người, nghiêng cổ) ──
+    if (isHold) {
+      if (this.holdStart === null) {
+        if (p >= 1) {
+          this.holdStart = f.t;
+          this.currentHold = 0;
+        }
+      } else if (p >= THRESHOLDS.HOLD_KEEP_PROGRESS) {
+        this.currentHold = f.t - this.holdStart;
+        if (this.currentHold > this.bestHold) this.bestHold = this.currentHold;
+      } else {
+        // Rời tư thế giữa chừng -> đặt lại đồng hồ giữ về 0 (không cộng dồn)
+        this.holdStart = null;
+        this.currentHold = 0;
+      }
+
+      const elapsed = f.t - this.samples[0].t;
+      const holdCompleted = this.currentHold >= this.def.holdMs && elapsed >= this.def.minRepMs;
+      const timedOut = elapsed > this.def.maxRepMs;
+      const returnedToRest = p <= endThr;
+
+      if (holdCompleted || returnedToRest || timedOut) {
+        const completedHoldMs = holdCompleted ? this.currentHold : 0;
+        const rep = this.finalize(timedOut);
+
+        this.active = false;
+        this.samples = [];
+        this.peakFrame = null;
+        this.holdStart = null;
+        this.currentHold = 0;
+        this.bestHold = 0;
+
+        if (holdCompleted) {
+          // Đã chốt rep ngay khi giữ đủ giờ: khóa bộ đếm chờ về vùng nghỉ + hết cooldown
+          if (rep?.counted) this.lastCountedAt = f.t;
+          this.armed = false;
+          this.awaitingRest = true;
+        } else {
+          this.armed = returnedToRest;
+          this.awaitingRest = !returnedToRest;
+        }
+
+        return { gate, progress: p, rep, metric: this.ema, holdMs: completedHoldMs, awaitingRest: this.awaitingRest };
+      }
+
+      return { gate, progress: p, rep: null, metric: this.ema, holdMs: this.currentHold, awaitingRest: false };
+    }
+
+    // ── Nhánh 2: Động tác động (squat, nâng gối) — giữ nguyên xuống rồi lên ──
     const elapsed = f.t - this.samples[0].t;
     const timedOut = elapsed > this.def.maxRepMs;
-    if (p < CONFIG.endProgress || timedOut) {
+    if (p < endThr || timedOut) {
       const rep = this.finalize(timedOut);
-      this.active = false; this.armed = !timedOut || p < CONFIG.endProgress;
-      this.samples = []; this.peakFrame = null;
-      return { gate, progress: p, rep };
+      this.active = false;
+      this.armed = !timedOut || p < endThr;
+      this.samples = [];
+      this.peakFrame = null;
+      return { gate, progress: p, rep, metric: this.ema, holdMs: 0, awaitingRest: false };
     }
-    return { gate, progress: p, rep: null };
+
+    return { gate, progress: p, rep: null, metric: this.ema, holdMs: 0, awaitingRest: false };
   }
 
   private finalize(timedOut: boolean): RepResult | null {
@@ -249,11 +423,12 @@ export class RepCounter {
     if (s.length < 3 || this.maxP < 0.6) return null; // tiny movement: ignore silently
     const flags: RepFlag[] = [];
     const durationMs = s[s.length - 1].t - s[0].t;
+    const effectiveHoldMs = d.holdMs > 0 ? this.currentHold : this.bestHold;
 
     if (this.maxP < 1) flags.push('NOT_DEEP_ENOUGH');
     if (durationMs < d.minRepMs) flags.push('TOO_FAST');
     if (timedOut || durationMs > d.maxRepMs) flags.push('TOO_SLOW');
-    if (this.bestHold < d.holdMs) flags.push('HOLD_TOO_SHORT');
+    if (effectiveHoldMs < d.holdMs) flags.push('HOLD_TOO_SHORT');
 
     let peakVelocity = 0;
     for (let i = 1; i < s.length; i++) {
@@ -274,7 +449,8 @@ export class RepCounter {
     const counted = quality >= CONFIG.minQuality && !flags.some(x => HARD_FLAGS.has(x));
     return {
       exercise: d.id, startT: s[0].t, endT: s[s.length - 1].t, durationMs,
-      maxProgress: this.maxP, holdMs: this.bestHold, peakVelocity, reversals, quality,
+      maxProgress: this.maxP, holdMs: d.holdMs > 0 ? Math.max(effectiveHoldMs, this.bestHold) : this.bestHold,
+      peakVelocity, reversals, quality,
       trajectory: resample(s, 20), xp: counted ? Math.round(d.baseXp * quality) : 0, counted, flags,
     };
   }
@@ -404,20 +580,23 @@ export interface RunInput { reps: RepSummary[]; durationMs: number; guardVerdict
 export interface RunResult { verdict: Verdict; accepted: boolean; xp: number; reasons: string[] }
 
 /**
- * Called once when a run ends. Re-checks every rep against the exercise rules (guards against bugs / tampering
- * in UI code), combines it with the SessionGuard verdict and applies the XP cap.
- * @param xpAlreadyEarned XP earned earlier in this page load (in-memory), for the cap.
+ * Called once when a run ends. Re-checks every rep against the exercise rules (including
+ * hold reps that finish right at peak without a lowering phase), combines with SessionGuard
+ * verdict, and applies the XP cap.
  */
 export function finalizeRun(input: RunInput, xpAlreadyEarned: number): RunResult {
   const reasons: string[] = [];
   let sum = 0;
   for (const r of input.reps) {
     const d = EXERCISES[r.exercise];
+    // Rep giữ hợp lệ phải bắt đầu từ dưới mức đích (không khởi đầu sẵn ở peak như ảnh tĩnh)
+    // và không yêu cầu có pha hạ tay ở cuối quỹ đạo.
+    const invalidHoldStart = Boolean(d && d.holdMs > 0 && r.trajectory.length === 20 && r.trajectory[0] >= 1);
     const bad = !d ||
       r.durationMs < d.minRepMs || r.durationMs > d.maxRepMs || r.maxProgress < 1 || r.holdMs < d.holdMs ||
       r.peakVelocity > maxVelocity(d) || r.reversals > CONFIG.maxReversals ||
       r.quality < CONFIG.minQuality || r.quality > 1 || r.trajectory.length !== 20 ||
-      r.xp !== Math.round(d.baseXp * r.quality);
+      r.xp !== Math.round(d.baseXp * r.quality) || invalidHoldStart;
     if (bad) reasons.push('INVALID_REP:' + r.exercise); else sum += r.xp;
   }
   // physical upper bound on number of reps for the run length

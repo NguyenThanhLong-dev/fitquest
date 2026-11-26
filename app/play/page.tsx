@@ -12,8 +12,8 @@ import { useGameStore } from '@/lib/game/store';
 import type { ExerciseId, Landmark } from '@/lib/pose-engine';
 import { i18n } from '@/lib/i18n';
 
-// Bật/tắt bảng debug tốc độ, ngưỡng TELEPORT và lý do từ chối gần nhất bằng 1 hằng số
-const SHOW_VELOCITY_DEBUG = true;
+// Bật/tắt chế độ debug (góc hiện tại vs ngưỡng, thời gian giữ, tốc độ và lý do từ chối gần nhất)
+const SHOW_EXERCISE_DEBUG = true;
 
 // Danh sách cố định 5 động tác của FitQuest (chế độ luyện tập F3)
 const EXERCISE_IDS: readonly ExerciseId[] = [
@@ -33,9 +33,9 @@ const HINT_CARD_STYLES: Record<ProgressTone, string> = {
 };
 
 /**
- * Trang luyện tập AI ("/play") — Task F3:
- * Chọn 1 trong 5 động tác, làm mượt landmarks bằng One Euro Filter, đếm rep bằng RepCounter,
- * hiển thị vòng tiến độ, chất lượng rep (0–1), gợi ý form và bảng debug tốc độ (khi bật).
+ * Trang luyện tập AI ("/play") — Task F3 (đã tinh chỉnh theo thực tế):
+ * Chọn 1 trong 5 động tác, đếm rep bằng RepCounter, tính ngay rep giữ khi đủ thời gian,
+ * hiển thị vòng tiến độ, chất lượng rep (0–1), gợi ý form và bảng debug góc/thời gian giữ.
  */
 export default function PlayPage() {
   const displayName = useGameStore((state) => state.displayName);
@@ -47,7 +47,6 @@ export default function PlayPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<PoseOverlayHandle | null>(null);
 
-  // Hook đếm rep & phân tích form (tích hợp One Euro Filter ở tầng F3)
   const { uiState, pushFrame, reset } = useRepCounter(selectedExercise);
 
   const handleCameraReadyChange = useCallback(
@@ -58,7 +57,7 @@ export default function PlayPage() {
     []
   );
 
-  // Vẽ khung xương trực tiếp lên canvas mà không kích hoạt React re-render
+  // Vẽ khung xương rút gọn trực tiếp lên canvas mà không kích hoạt React re-render
   const handlePose = useCallback((landmarks: readonly Landmark[] | null) => {
     overlayRef.current?.draw(landmarks);
   }, []);
@@ -83,6 +82,13 @@ export default function PlayPage() {
   const isHoldExercise = uiState.targetHoldMs > 0;
   const isAiActive = cameraReady && status === 'ready';
 
+  const bodyScopeText =
+    activeExMeta.scope === 'squat'
+      ? i18n.play.practice.bodyScopeSquat
+      : activeExMeta.scope === 'full'
+        ? i18n.play.practice.bodyScopeFull
+        : i18n.play.practice.bodyScopeUpper;
+
   const ringValueText = isHoldExercise
     ? `${(uiState.currentHoldMs / 1000).toFixed(1)}${i18n.play.practice.holdUnit}`
     : `${Math.round(uiState.ringProgress * 100)}%`;
@@ -96,6 +102,22 @@ export default function PlayPage() {
 
   const debugInfo = uiState.debug;
   const peakExceeded = debugInfo.livePeakVelocity > debugInfo.maxVelocityThreshold;
+  const secondaryExceeded =
+    debugInfo.secondaryValueDeg !== null &&
+    debugInfo.secondaryValueDeg > debugInfo.secondaryMaxDeg;
+
+  const metricReached =
+    debugInfo.metricValue !== null &&
+    (debugInfo.peakThreshold >= debugInfo.restThreshold
+      ? debugInfo.metricValue >= debugInfo.peakThreshold
+      : debugInfo.metricValue <= debugInfo.peakThreshold);
+
+  const debugPhaseText =
+    debugInfo.phase === 'awaitingRest'
+      ? i18n.play.practice.debug.stateAwaitingRest
+      : debugInfo.phase === 'active'
+        ? i18n.play.practice.debug.stateActive
+        : i18n.play.practice.debug.stateReady;
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100">
@@ -136,11 +158,7 @@ export default function PlayPage() {
             <h2 className="text-sm font-semibold text-slate-200">
               {i18n.play.practice.chooseExerciseLabel}
             </h2>
-            <span className="text-xs text-slate-400">
-              {activeExMeta.scope === 'full'
-                ? i18n.play.practice.bodyScopeFull
-                : i18n.play.practice.bodyScopeUpper}
-            </span>
+            <span className="text-xs text-slate-400">{bodyScopeText}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -199,7 +217,7 @@ export default function PlayPage() {
         )}
 
         {/* Bố cục chính: Camera bên trái, HUD luyện tập bên phải */}
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_350px]">
           <div className="space-y-3">
             <CameraView
               videoRef={videoRef}
@@ -255,7 +273,7 @@ export default function PlayPage() {
                 )}
               </div>
 
-              {/* Cảnh báo nổi khi mất tư thế hoặc rep bị hủy */}
+              {/* Cảnh báo nổi khi mất tư thế hoặc rep đang dở bị hủy */}
               {isAiActive && activeWarningReason && (
                 <div className="pointer-events-none absolute inset-x-3 bottom-3">
                   <div
@@ -418,10 +436,10 @@ export default function PlayPage() {
               )}
             </div>
 
-            {/* 5. Khung debug tốc độ (bật/tắt bằng hằng số SHOW_VELOCITY_DEBUG ở đầu file) */}
-            {SHOW_VELOCITY_DEBUG && (
+            {/* 5. Khung debug góc/chỉ số, thời gian giữ, tốc độ & lý do từ chối gần nhất */}
+            {SHOW_EXERCISE_DEBUG && (
               <div className="rounded-2xl border border-slate-800 bg-slate-950/90 p-4 font-mono text-xs text-slate-300">
-                <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="mb-2.5 flex items-center justify-between gap-2">
                   <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                     {i18n.play.practice.debug.title}
                   </span>
@@ -433,7 +451,59 @@ export default function PlayPage() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1.5">
+                  {/* Giá trị góc hoặc chỉ số hiện tại so với ngưỡng đích */}
+                  <span className="text-slate-400">
+                    {debugInfo.isAngleExercise
+                      ? i18n.play.practice.debug.metricAngleLabel
+                      : i18n.play.practice.debug.metricRatioLabel}
+                    :
+                  </span>
+                  <span
+                    className={`text-right font-semibold ${
+                      metricReached ? 'text-emerald-300' : 'text-sky-300'
+                    }`}
+                  >
+                    {debugInfo.metricValue !== null
+                      ? debugInfo.isAngleExercise
+                        ? `${debugInfo.metricValue.toFixed(1)}° / ${debugInfo.peakThreshold.toFixed(1)}°`
+                        : `${debugInfo.metricValue.toFixed(2)} → ${debugInfo.peakThreshold.toFixed(2)}`
+                      : '—'}
+                  </span>
+
+                  {/* Góc điều kiện phụ (vai ngang / hông ngang / lưng thẳng) */}
+                  <span className="text-slate-400">
+                    {i18n.play.practice.debug.secondaryLabels[debugInfo.secondaryKind]}:
+                  </span>
+                  <span
+                    className={`text-right ${
+                      secondaryExceeded ? 'text-amber-300' : 'text-slate-200'
+                    }`}
+                  >
+                    {debugInfo.secondaryValueDeg !== null
+                      ? `${debugInfo.secondaryValueDeg.toFixed(1)}° / ≤ ${debugInfo.secondaryMaxDeg}°`
+                      : '—'}
+                  </span>
+
+                  {/* Thời gian đã giữ */}
+                  <span className="text-slate-400">
+                    {i18n.play.practice.debug.holdTimeLabel}:
+                  </span>
+                  <span className="text-right text-slate-100">
+                    {debugInfo.targetHoldMs > 0
+                      ? `${(debugInfo.currentHoldMs / 1000).toFixed(2)}s / ${(debugInfo.targetHoldMs / 1000).toFixed(2)}s`
+                      : i18n.play.practice.debug.holdNotApplicable}
+                  </span>
+
+                  {/* Trạng thái bộ đếm (sẵn sàng / đang giữ / chờ thả lỏng) */}
+                  <span className="text-slate-400">
+                    {i18n.play.practice.debug.stateLabel}:
+                  </span>
+                  <span className="text-right font-sans text-slate-200">
+                    {debugPhaseText}
+                  </span>
+
+                  {/* Tốc độ hiện tại & đỉnh so với ngưỡng TELEPORT */}
                   <span className="text-slate-400">
                     {i18n.play.practice.debug.currentVelocityLabel}:
                   </span>
@@ -450,7 +520,8 @@ export default function PlayPage() {
                       peakExceeded ? 'text-rose-400' : 'text-emerald-300'
                     }`}
                   >
-                    {debugInfo.livePeakVelocity.toFixed(2)}{' '}
+                    {debugInfo.livePeakVelocity.toFixed(2)} /{' '}
+                    {debugInfo.maxVelocityThreshold.toFixed(2)}{' '}
                     {i18n.play.practice.debug.velocityUnit}
                   </span>
 
@@ -462,16 +533,9 @@ export default function PlayPage() {
                       ? `${debugInfo.lastRepPeakVelocity.toFixed(2)} ${i18n.play.practice.debug.velocityUnit}`
                       : '—'}
                   </span>
-
-                  <span className="text-slate-400">
-                    {i18n.play.practice.debug.thresholdLabel}:
-                  </span>
-                  <span className="text-right text-amber-300">
-                    {debugInfo.maxVelocityThreshold.toFixed(2)}{' '}
-                    {i18n.play.practice.debug.velocityUnit}
-                  </span>
                 </div>
 
+                {/* Lý do từ chối gần nhất */}
                 <div className="mt-3 border-t border-slate-800 pt-2.5">
                   <p className="font-sans text-[11px] font-semibold text-slate-400">
                     {i18n.play.practice.debug.lastRejectionLabel}

@@ -1,23 +1,54 @@
 'use client';
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import type { Landmark } from '@/lib/pose-engine';
+import { LM, type Landmark } from '@/lib/pose-engine';
 
-const POSE_CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
-  // Khuôn mặt
-  [0, 1], [1, 2], [2, 3], [3, 7],
-  [0, 4], [4, 5], [5, 6], [6, 8],
-  [9, 10],
+/**
+ * Chỉ hiển thị đúng 15 điểm khớp gọn gàng:
+ * - Mặt: mũi + 2 tai (ẩn mắt, miệng và các điểm mặt khác)
+ * - Tay: vai, khuỷu, cổ tay (ẩn toàn bộ ngón tay)
+ * - Chân: hông, gối, cổ chân (ẩn gót chân và mũi bàn chân)
+ */
+const VISIBLE_LANDMARK_INDICES: readonly number[] = [
+  LM.NOSE,
+  LM.L_EAR,
+  LM.R_EAR,
+  LM.L_SHOULDER,
+  LM.R_SHOULDER,
+  LM.L_ELBOW,
+  LM.R_ELBOW,
+  LM.L_WRIST,
+  LM.R_WRIST,
+  LM.L_HIP,
+  LM.R_HIP,
+  LM.L_KNEE,
+  LM.R_KNEE,
+  LM.L_ANKLE,
+  LM.R_ANKLE,
+];
+
+// Đường nối 2 tai riêng biệt để dễ quan sát độ nghiêng đầu (bài nghiêng cổ)
+const EAR_TILT_CONNECTION: readonly [number, number] = [LM.L_EAR, LM.R_EAR];
+
+// Đường nối thân, tay (tới cổ tay) và chân (tới cổ chân)
+const BODY_CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
   // Thân trên
-  [11, 12], [11, 23], [12, 24], [23, 24],
-  // Tay trái
-  [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
-  // Tay phải
-  [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
-  // Chân trái
-  [23, 25], [25, 27], [27, 29], [27, 31], [29, 31],
-  // Chân phải
-  [24, 26], [26, 28], [28, 30], [28, 32], [30, 32],
+  [LM.L_SHOULDER, LM.R_SHOULDER],
+  [LM.L_SHOULDER, LM.L_HIP],
+  [LM.R_SHOULDER, LM.R_HIP],
+  [LM.L_HIP, LM.R_HIP],
+  // Tay trái (vai -> khuỷu -> cổ tay)
+  [LM.L_SHOULDER, LM.L_ELBOW],
+  [LM.L_ELBOW, LM.L_WRIST],
+  // Tay phải (vai -> khuỷu -> cổ tay)
+  [LM.R_SHOULDER, LM.R_ELBOW],
+  [LM.R_ELBOW, LM.R_WRIST],
+  // Chân trái (hông -> gối -> cổ chân)
+  [LM.L_HIP, LM.L_KNEE],
+  [LM.L_KNEE, LM.L_ANKLE],
+  // Chân phải (hông -> gối -> cổ chân)
+  [LM.R_HIP, LM.R_KNEE],
+  [LM.R_KNEE, LM.R_ANKLE],
 ];
 
 const TWO_PI = Math.PI * 2;
@@ -36,7 +67,7 @@ export interface PoseOverlayProps {
 }
 
 /**
- * Canvas trong suốt phủ đúng kích thước video, vẽ khung xương trực tiếp qua ref
+ * Canvas trong suốt phủ đúng kích thước video, vẽ khung xương rút gọn trực tiếp qua ref
  * để không gây re-render React mỗi frame.
  */
 export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
@@ -77,14 +108,14 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
 
           const scale = Math.max(1, w / 640);
 
-          // 1. Vẽ toàn bộ đường nối xương trong 1 lượt stroke()
+          // 1. Vẽ toàn bộ đường xương thân/tay/chân trong 1 lượt stroke()
           ctx.lineWidth = 2.5 * scale;
           ctx.lineCap = 'round';
           ctx.strokeStyle = '#34d399';
           ctx.beginPath();
 
-          for (let i = 0; i < POSE_CONNECTIONS.length; i++) {
-            const pair = POSE_CONNECTIONS[i];
+          for (let i = 0; i < BODY_CONNECTIONS.length; i++) {
+            const pair = BODY_CONNECTIONS[i];
             const a = landmarks[pair[0]];
             const b = landmarks[pair[1]];
             if (!a || !b) continue;
@@ -99,7 +130,24 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
           }
           ctx.stroke();
 
-          // 2. Vẽ khớp rõ (visibility >= 0.6) màu xanh
+          // 2. Vẽ đường nối hai tai bằng màu xanh dương nổi bật để thấy rõ độ nghiêng đầu
+          const leftEar = landmarks[EAR_TILT_CONNECTION[0]];
+          const rightEar = landmarks[EAR_TILT_CONNECTION[1]];
+          if (
+            leftEar &&
+            rightEar &&
+            leftEar.visibility >= DRAW_MIN_VISIBILITY &&
+            rightEar.visibility >= DRAW_MIN_VISIBILITY
+          ) {
+            ctx.lineWidth = 2.5 * scale;
+            ctx.strokeStyle = '#38bdf8';
+            ctx.beginPath();
+            ctx.moveTo(leftEar.x * w, leftEar.y * h);
+            ctx.lineTo(rightEar.x * w, rightEar.y * h);
+            ctx.stroke();
+          }
+
+          // 3. Vẽ các khớp rõ (visibility >= 0.6) trong 15 điểm được phép hiển thị
           const dotRadius = 4 * scale;
           ctx.lineWidth = 1.5 * scale;
           ctx.strokeStyle = '#020617';
@@ -107,9 +155,9 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
           ctx.beginPath();
 
           let hasAmber = false;
-          for (let i = 0; i < landmarks.length; i++) {
-            const pt = landmarks[i];
-            if (pt.visibility < DRAW_MIN_VISIBILITY) continue;
+          for (let i = 0; i < VISIBLE_LANDMARK_INDICES.length; i++) {
+            const pt = landmarks[VISIBLE_LANDMARK_INDICES[i]];
+            if (!pt || pt.visibility < DRAW_MIN_VISIBILITY) continue;
             if (pt.visibility < RELIABLE_VISIBILITY) {
               hasAmber = true;
               continue;
@@ -122,13 +170,14 @@ export const PoseOverlay = forwardRef<PoseOverlayHandle, PoseOverlayProps>(
           ctx.fill();
           ctx.stroke();
 
-          // 3. Vẽ khớp hơi mờ (0.5..0.6) màu vàng
+          // 4. Vẽ các khớp hơi mờ (0.5..0.6) màu vàng
           if (hasAmber) {
             ctx.fillStyle = '#fbbf24';
             ctx.beginPath();
-            for (let i = 0; i < landmarks.length; i++) {
-              const pt = landmarks[i];
+            for (let i = 0; i < VISIBLE_LANDMARK_INDICES.length; i++) {
+              const pt = landmarks[VISIBLE_LANDMARK_INDICES[i]];
               if (
+                !pt ||
                 pt.visibility < DRAW_MIN_VISIBILITY ||
                 pt.visibility >= RELIABLE_VISIBILITY
               ) {

@@ -2,7 +2,7 @@ import type { ExerciseId, GateReason } from '@/lib/pose-engine';
 
 /**
  * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest.
- * Giữ nguyên toàn bộ khóa F1 + F2 + F3 và bổ sung nhãn cho bảng debug tốc độ.
+ * Giữ nguyên toàn bộ khóa F1 + F2 + F3 và bổ sung chuỗi cho quy tắc bài giữ & khung debug góc/giữ.
  */
 export const i18n = {
   // ── F1: Metadata toàn cục ──
@@ -88,7 +88,8 @@ export const i18n = {
       repCountedBadge: 'Đã tính',
       repRejectedBadge: 'Không tính',
       formHintLabel: 'Gợi ý form theo thời gian thực',
-      bodyScopeFull: 'Cần thấy toàn thân',
+      bodyScopeFull: 'Cần thấy thân & chân',
+      bodyScopeSquat: 'Chỉ cần thấy vai, hông và gối (không cần cổ chân)',
       bodyScopeUpper: 'Chỉ cần thấy thân trên',
       holdUnit: 's',
 
@@ -96,7 +97,9 @@ export const i18n = {
       status: {
         waitingCamera: 'Đang chờ camera và AI sẵn sàng...',
         holding: 'Giữ nguyên tư thế...',
-        holdComplete: 'Đủ thời gian giữ! Trở về tư thế nghỉ',
+        holdComplete: 'Đã tính rep! Thả lỏng về tư thế nghỉ để tập rep tiếp theo',
+        awaitingRest: 'Đã xong rep — hãy thả lỏng về tư thế nghỉ trước khi tập tiếp',
+        startFromRest: 'Hãy về tư thế nghỉ trước khi bắt đầu giữ',
         repCancelledTitle: 'Rep đang tập đã bị hủy',
         poseLostTitle: 'Tạm dừng đếm (mất tư thế / thiếu khớp)',
         countedGood: 'Rep chuẩn! Tiếp tục giữ nhịp',
@@ -119,9 +122,9 @@ export const i18n = {
       exercises: {
         squat: {
           name: 'Squat',
-          meta: 'Toàn thân · Động tác động',
-          scope: 'full',
-          readyCue: 'Tư thế tốt — bắt đầu hạ hông squat',
+          meta: 'Vai–hông–gối · Động tác động',
+          scope: 'squat',
+          readyCue: 'Tư thế tốt — bắt đầu hạ hông squat rồi đứng thẳng lên',
           depthCue: 'Hạ thấp hông thêm',
           peakCue: 'Đạt độ sâu! Đứng thẳng về tư thế nghỉ',
           notDeepEnough: 'Hạ thấp hông thêm',
@@ -130,7 +133,7 @@ export const i18n = {
           name: 'Vươn vai',
           meta: 'Thân trên · Giữ 2s',
           scope: 'upper',
-          readyCue: 'Tư thế tốt — vươn hai tay cao quá đầu và giữ 2 giây',
+          readyCue: 'Tư thế tốt — vươn hai tay cao quá đầu và giữ liên tục 2 giây',
           depthCue: 'Đưa cả hai tay cao hơn quá đầu',
           peakCue: 'Giữ nguyên hai tay trên đầu...',
           notDeepEnough: 'Đưa hai tay cao quá đầu thêm',
@@ -139,19 +142,19 @@ export const i18n = {
           name: 'Nghiêng người',
           meta: 'Thân trên · Giữ 1,5s',
           scope: 'upper',
-          readyCue: 'Tư thế tốt — nghiêng thân sang một bên và giữ 1,5 giây',
-          depthCue: 'Nghiêng người sâu hơn một chút',
+          readyCue: 'Tư thế tốt — nghiêng người nhẹ sang một bên và giữ liên tục 1,5 giây',
+          depthCue: 'Nghiêng người thêm một chút',
           peakCue: 'Giữ nguyên tư thế nghiêng...',
-          notDeepEnough: 'Nghiêng người sâu hơn',
+          notDeepEnough: 'Nghiêng người thêm một chút',
         },
         neck_tilt: {
           name: 'Nghiêng cổ',
           meta: 'Thân trên · Giữ 2s',
           scope: 'upper',
-          readyCue: 'Tư thế tốt — nghiêng cổ sang bên, giữ hai vai ngang',
+          readyCue: 'Tư thế tốt — nghiêng nhẹ đầu sang bên và giữ liên tục 2 giây',
           depthCue: 'Nghiêng cổ thêm một chút',
           peakCue: 'Giữ nguyên cổ nghiêng...',
-          notDeepEnough: 'Nghiêng cổ sâu hơn một chút',
+          notDeepEnough: 'Nghiêng cổ thêm một chút',
         },
         high_knees: {
           name: 'Nâng gối',
@@ -167,7 +170,7 @@ export const i18n = {
         {
           name: string;
           meta: string;
-          scope: 'full' | 'upper';
+          scope: 'full' | 'squat' | 'upper';
           readyCue: string;
           depthCue: string;
           peakCue: string;
@@ -178,33 +181,46 @@ export const i18n = {
       // Gợi ý theo id của từng FormCheck trong EXERCISES[*].form
       formChecks: {
         TORSO_UPRIGHT: 'Giữ lưng thẳng hơn',
-        HIPS_LEVEL: 'Giữ hông ngang, tránh nghiêng lệch',
+        HIPS_LEVEL: 'Giữ hông tương đối cân bằng',
         BOTH_WRISTS_UP: 'Đưa cả hai tay cao quá đầu',
-        SHOULDERS_LEVEL: 'Giữ vai ngang',
+        SHOULDERS_LEVEL: 'Giữ vai tương đối ngang',
       } as Record<string, string>,
 
       // Gợi ý theo mã cờ trả về trong RepResult.flags của pose-engine.ts
       repFlags: {
         TOO_FAST: 'Chậm lại, kiểm soát động tác tốt hơn',
         TOO_SLOW: 'Thực hiện dứt khoát hơn (quá lâu)',
-        HOLD_TOO_SHORT: 'Giữ lâu hơn cho đủ thời gian yêu cầu',
+        HOLD_TOO_SHORT: 'Giữ liên tục đủ thời gian yêu cầu',
         JITTER: 'Di chuyển mượt và ổn định hơn',
         TELEPORT: 'Chuyển động quá đột ngột, hãy tập chậm lại',
         FORM_TORSO_UPRIGHT: 'Giữ lưng thẳng hơn',
-        FORM_HIPS_LEVEL: 'Giữ hông ngang, tránh nghiêng lệch',
+        FORM_HIPS_LEVEL: 'Giữ hông tương đối cân bằng',
         FORM_BOTH_WRISTS_UP: 'Đưa cả hai tay cao quá đầu',
-        FORM_SHOULDERS_LEVEL: 'Giữ vai ngang',
+        FORM_SHOULDERS_LEVEL: 'Giữ vai tương đối ngang',
       } as Record<string, string>,
 
-      // Khung debug tốc độ & lý do từ chối gần nhất
+      // Khung debug góc, thời gian giữ, tốc độ & lý do từ chối gần nhất
       debug: {
-        title: 'Debug tốc độ & bộ lọc (F3)',
+        title: 'Debug góc, giữ & bộ lọc (F3)',
+        metricAngleLabel: 'Góc hiện tại / Ngưỡng',
+        metricRatioLabel: 'Chỉ số hiện tại / Ngưỡng',
+        holdTimeLabel: 'Thời gian đã giữ',
+        holdNotApplicable: 'Không áp dụng',
+        secondaryLabels: {
+          shoulderTilt: 'Độ nghiêng vai / Dung sai',
+          hipTilt: 'Độ nghiêng hông / Dung sai',
+          torsoLean: 'Độ gập thân / Dung sai',
+        },
+        stateLabel: 'Trạng thái đếm',
+        stateReady: 'Sẵn sàng',
+        stateActive: 'Đang vào/giữ rep',
+        stateAwaitingRest: 'Chờ thả lỏng về nghỉ',
         currentVelocityLabel: 'Tốc độ hiện tại',
         livePeakLabel: 'Đỉnh rep hiện tại',
         lastRepPeakLabel: 'Đỉnh rep vừa xong',
         thresholdLabel: 'Ngưỡng TELEPORT',
         velocityUnit: 'p/s',
-        filterLabel: 'One Euro Filter',
+        filterLabel: 'One Euro',
         filterOn: 'Bật',
         filterOff: 'Tắt',
         lastRejectionLabel: 'Lý do từ chối gần nhất',
