@@ -12,11 +12,14 @@ import { SideObjectivesCard } from '@/components/game/SideObjectivesCard';
 import { SkillsPanel } from '@/components/game/SkillsPanel';
 import { RunSummary } from '@/components/game/RunSummary';
 import { LevelUpBanner } from '@/components/game/LevelUpBanner';
+import { GuideModal } from '@/components/game/GuideModal';
+import { PrivacyModal } from '@/components/game/PrivacyModal';
 import { usePoseLandmarker } from '@/lib/pose/usePoseLandmarker';
 import { useRepCounter } from '@/lib/pose/useRepCounter';
 import { useDungeonRun } from '@/lib/pose/useDungeonRun';
 import { LANDMARK_FILTER_CONFIG } from '@/lib/pose/landmarkFilter';
 import { MIRROR_HAND_MAPPING } from '@/lib/pose/liveness';
+import { getAllowedExercises, type PostureMode } from '@/lib/game/engineAdapter';
 import { FX_CONFIG } from '@/lib/game/cosmetics';
 import { unlockGameAudio } from '@/lib/game/sound';
 import { useGameStore } from '@/lib/game/store';
@@ -27,14 +30,6 @@ const SHOW_DEBUG_TOOLS = true;
 
 type PlayMode = 'dungeon' | 'practice';
 
-const EXERCISE_IDS: readonly ExerciseId[] = [
-  'squat',
-  'overhead_reach',
-  'side_bend',
-  'neck_tilt',
-  'high_knees',
-];
-
 const HINT_CARD_STYLES: Record<ProgressTone, string> = {
   neutral: 'border-slate-700 bg-slate-900/90 text-slate-200',
   info: 'border-sky-500/40 bg-sky-950/50 text-sky-100',
@@ -43,22 +38,59 @@ const HINT_CARD_STYLES: Record<ProgressTone, string> = {
   error: 'border-rose-500/50 bg-rose-950/60 text-rose-100',
 };
 
+/**
+ * Trang chơi chính ("/play") — Hoàn thiện Task F8:
+ * - Công tắc "Đứng / Ngồi" trước mỗi lượt (đồng bộ Zustand RAM).
+ * - Chế độ Ngồi ẩn Squat & Nâng gối, chỉ vẽ khung xương thân trên, hướng dẫn đặt webcam 60–80cm.
+ * - Màn hướng dẫn nhanh tự mở lần đầu vào /play và mở lại từ nút "?".
+ * - Khung "Quyền riêng tư" và nút "Tắt camera" / "Bật camera" rõ ràng.
+ */
 export default function PlayPage() {
   const displayName = useGameStore((state) => state.displayName);
   const verifiedReps = useGameStore((state) => state.verifiedReps);
   const soundEnabled = useGameStore((state) => state.soundEnabled);
   const toggleSound = useGameStore((state) => state.toggleSound);
+  const postureMode = useGameStore((state) => state.postureMode);
+  const setPostureMode = useGameStore((state) => state.setPostureMode);
+  const hasSeenGuide = useGameStore((state) => state.hasSeenGuide);
+  const markGuideSeen = useGameStore((state) => state.markGuideSeen);
 
   const [mode, setMode] = useState<PlayMode>('dungeon');
   const [selectedExercise, setSelectedExercise] = useState<ExerciseId>('squat');
+  const [cameraEnabled, setCameraEnabled] = useState(true);
   const [cameraReady, setCameraReady] = useState(false);
   const [videoSize, setVideoSize] = useState<VideoSize | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<PoseOverlayHandle | null>(null);
   const modeRef = useRef<PlayMode>(mode);
+
+  const allowedExercises = getAllowedExercises(postureMode);
+  const isSeated = postureMode === 'seated';
+
+  // Đảm bảo ở chế độ Ngồi không bao giờ chọn nhầm squat hoặc high_knees
+  useEffect(() => {
+    if (!allowedExercises.includes(selectedExercise)) {
+      setSelectedExercise(allowedExercises[0]);
+    }
+  }, [allowedExercises, selectedExercise]);
+
+  // Tự mở màn hướng dẫn nhanh ở lần đầu vào /play (chỉ trong RAM)
+  useEffect(() => {
+    if (!hasSeenGuide) {
+      setGuideOpen(true);
+    }
+  }, [hasSeenGuide]);
+
+  const handleCloseGuide = useCallback(() => {
+    unlockGameAudio();
+    markGuideSeen();
+    setGuideOpen(false);
+  }, [markGuideSeen]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -91,8 +123,8 @@ export default function PlayPage() {
     modeRef.current = mode;
   }, [mode]);
 
-  const practice = useRepCounter(selectedExercise);
-  const dungeon = useDungeonRun();
+  const practice = useRepCounter(selectedExercise, postureMode);
+  const dungeon = useDungeonRun(postureMode);
 
   const isShowingSummary =
     mode === 'dungeon' && dungeon.uiState.summary !== null;
@@ -130,7 +162,7 @@ export default function PlayPage() {
     retry,
   } = usePoseLandmarker({
     videoRef,
-    enabled: cameraReady && !isShowingSummary,
+    enabled: cameraEnabled && cameraReady && !isShowingSummary,
     onPose: handlePose,
     onFrame: handleFrame,
   });
@@ -156,13 +188,36 @@ export default function PlayPage() {
     toggleSound();
   }, [toggleSound]);
 
-  const isAiActive = cameraReady && status === 'ready';
+  const handleChangePosture = useCallback(
+    (nextPosture: PostureMode) => {
+      unlockGameAudio();
+      if (nextPosture === postureMode) return;
+      setPostureMode(nextPosture);
+    },
+    [postureMode, setPostureMode]
+  );
+
+  const handleToggleCamera = useCallback(() => {
+    unlockGameAudio();
+    setCameraEnabled((prev) => {
+      if (prev) {
+        overlayRef.current?.clear();
+      }
+      return !prev;
+    });
+  }, []);
+
+  const isAiActive = cameraEnabled && cameraReady && status === 'ready';
   const isLowFps =
     isAiActive &&
     !isShowingSummary &&
     detectionFps > 0 &&
     detectionFps < FX_CONFIG.lowFpsThreshold;
   const reducedFx = prefersReducedMotion || isLowFps;
+
+  const activeReasonMap = isSeated
+    ? i18n.play.practice.frameCheck.seatedReasons
+    : i18n.play.practice.frameCheck.reasons;
 
   const dungeonUi = dungeon.uiState;
   const dungeonActiveWarning =
@@ -172,14 +227,16 @@ export default function PlayPage() {
   const practiceUi = practice.uiState;
   const activeExMeta = i18n.play.practice.exercises[selectedExercise];
   const isHoldExercise = practiceUi.targetHoldMs > 0;
-  const bodyScopeText =
-    activeExMeta.scope === 'squat'
+  const bodyScopeText = isSeated
+    ? i18n.posture.seatedSetupGuide
+    : activeExMeta.scope === 'squat'
       ? i18n.play.practice.bodyScopeSquat
       : activeExMeta.scope === 'torso'
         ? i18n.play.practice.bodyScopeTorso
         : activeExMeta.scope === 'full'
           ? i18n.play.practice.bodyScopeFull
           : i18n.play.practice.bodyScopeUpper;
+
   const practiceRingValueText = isHoldExercise
     ? `${(practiceUi.currentHoldMs / 1000).toFixed(1)}${i18n.play.practice.holdUnit}`
     : `${Math.round(practiceUi.ringProgress * 100)}%`;
@@ -213,7 +270,7 @@ export default function PlayPage() {
   const dungeonDebugTexts = i18n.dungeon.debug;
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-5 text-slate-100">
+    <main className="min-h-screen bg-slate-950 px-3 py-4 text-slate-100 sm:px-4 sm:py-5">
       {mode === 'dungeon' && dungeonUi.levelUpCelebration && (
         <LevelUpBanner
           celebration={dungeonUi.levelUpCelebration}
@@ -222,8 +279,9 @@ export default function PlayPage() {
       )}
 
       <div className="mx-auto max-w-6xl space-y-4">
-        <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-5 py-3">
-          <div className="flex flex-wrap items-center gap-3">
+        {/* Thanh tiêu đề: Tab chế độ, công tắc Đứng/Ngồi, Tắt/Bật camera, Âm thanh, ?, Quyền riêng tư, Debug */}
+        <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 sm:px-5">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
             <div>
               <h1 className="text-lg font-black tracking-tight text-emerald-400">
                 {i18n.play.title}
@@ -236,11 +294,12 @@ export default function PlayPage() {
               </p>
             </div>
 
+            {/* Chuyển tab Dungeon Run / Chế độ luyện tập */}
             <div className="inline-flex rounded-xl border border-slate-800 bg-slate-950 p-1">
               <button
                 type="button"
                 onClick={() => handleSwitchMode('dungeon')}
-                className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                className={`cursor-pointer rounded-lg px-3 py-2 text-xs font-bold transition ${
                   mode === 'dungeon'
                     ? 'bg-emerald-500 text-slate-950'
                     : 'text-slate-300 hover:text-white'
@@ -251,13 +310,42 @@ export default function PlayPage() {
               <button
                 type="button"
                 onClick={() => handleSwitchMode('practice')}
-                className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                className={`cursor-pointer rounded-lg px-3 py-2 text-xs font-bold transition ${
                   mode === 'practice'
                     ? 'bg-emerald-500 text-slate-950'
                     : 'text-slate-300 hover:text-white'
                 }`}
               >
                 {i18n.play.modeTabs.practice}
+              </button>
+            </div>
+
+            {/* Công tắc Đứng / Ngồi trước mỗi lượt */}
+            <div
+              className="inline-flex rounded-xl border border-slate-800 bg-slate-950 p-1"
+              aria-label={i18n.posture.label}
+            >
+              <button
+                type="button"
+                onClick={() => handleChangePosture('standing')}
+                className={`cursor-pointer rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  postureMode === 'standing'
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                🧍 {i18n.posture.standing}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleChangePosture('seated')}
+                className={`cursor-pointer rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  postureMode === 'seated'
+                    ? 'bg-sky-400 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                🪑 {i18n.posture.seated}
               </button>
             </div>
 
@@ -273,6 +361,23 @@ export default function PlayPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Nút Tắt / Bật camera rõ ràng */}
+            {!isShowingSummary && (
+              <button
+                type="button"
+                onClick={handleToggleCamera}
+                className={`cursor-pointer rounded-xl border px-3.5 py-2 text-xs font-bold transition ${
+                  cameraEnabled
+                    ? 'border-rose-500/50 bg-rose-950/50 text-rose-200 hover:bg-rose-900/60'
+                    : 'border-emerald-500/50 bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+                }`}
+              >
+                {cameraEnabled
+                  ? `📷 ${i18n.play.camera.turnOffButton}`
+                  : `📷 ${i18n.play.camera.turnOnButton}`}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleToggleSound}
@@ -287,11 +392,31 @@ export default function PlayPage() {
                 : i18n.dungeon.sound.offLabel}
             </button>
 
+            {/* Nút "?" mở lại màn hướng dẫn bất cứ lúc nào */}
+            <button
+              type="button"
+              onClick={() => setGuideOpen(true)}
+              title={i18n.guide.openButtonTitle}
+              aria-label={i18n.guide.openButtonTitle}
+              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-slate-700 bg-slate-950 text-sm font-black text-sky-300 transition hover:bg-slate-800"
+            >
+              ?
+            </button>
+
+            {/* Nút mở khung Quyền riêng tư */}
+            <button
+              type="button"
+              onClick={() => setPrivacyOpen(true)}
+              className="cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+            >
+              🔒 {i18n.privacy.buttonLabel}
+            </button>
+
             {SHOW_DEBUG_TOOLS && (
               <button
                 type="button"
                 onClick={() => setDebugOpen((open) => !open)}
-                className={`cursor-pointer rounded-xl border px-3.5 py-2 text-xs font-semibold transition ${
+                className={`cursor-pointer rounded-xl border px-3 py-2 text-xs font-semibold transition ${
                   debugOpen
                     ? 'border-sky-400 bg-sky-500/20 text-sky-200'
                     : 'border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-800'
@@ -305,14 +430,22 @@ export default function PlayPage() {
 
             <Link
               href="/"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800"
+              className="rounded-xl border border-slate-700 px-3.5 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800"
             >
               {i18n.play.backHome}
             </Link>
           </div>
         </header>
 
-        {/* Thanh Debug Dungeon: thêm góc/chỉ số hiện tại, độ vào tư thế & tỷ lệ vai/thân */}
+        {/* Banner mẹo đặt webcam riêng khi đang bật chế độ Ngồi */}
+        {isSeated && !isShowingSummary && (
+          <div className="rounded-2xl border border-sky-500/40 bg-sky-950/40 px-4 py-2.5 text-xs font-medium text-sky-100 sm:text-sm">
+            🪑 <strong>{i18n.posture.seatedBadge}:</strong>{' '}
+            {i18n.posture.seatedSetupGuide}
+          </div>
+        )}
+
+        {/* Thanh Debug Dungeon */}
         {SHOW_DEBUG_TOOLS && debugOpen && mode === 'dungeon' && (
           <section className="rounded-2xl border border-sky-500/40 bg-slate-900/95 p-4 font-mono text-xs text-slate-200">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -351,7 +484,7 @@ export default function PlayPage() {
               </div>
             </div>
 
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+            <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-6">
               <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
                 <div className="font-sans text-[11px] text-slate-400">
                   {dungeonDebugTexts.seedLabel}
@@ -389,9 +522,6 @@ export default function PlayPage() {
                   {dungeonUi.frameCheck.stableOk
                     ? i18n.play.practice.frameCheck.readyBadge
                     : dungeonUi.frameCheck.stableReason ?? 'NO_POSE'}
-                  {dungeonUi.frameCheck.torsoHeightRatio !== null
-                    ? ` (H:${dungeonUi.frameCheck.torsoHeightRatio.toFixed(2)})`
-                    : ''}
                 </div>
               </div>
 
@@ -443,14 +573,14 @@ export default function PlayPage() {
           </section>
         )}
 
-        {!isShowingSummary && status === 'loading' && (
+        {!isShowingSummary && cameraEnabled && status === 'loading' && (
           <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-300">
             <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
             <span>{i18n.play.model.loading}</span>
           </div>
         )}
 
-        {!isShowingSummary && status === 'error' && (
+        {!isShowingSummary && cameraEnabled && status === 'error' && (
           <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-rose-500/40 bg-rose-950/50 px-4 py-3 text-sm text-rose-200">
             <div className="flex-1 space-y-1">
               <p>{error}</p>
@@ -463,7 +593,7 @@ export default function PlayPage() {
             <button
               type="button"
               onClick={retry}
-              className="shrink-0 cursor-pointer rounded-lg bg-rose-500 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-400"
+              className="shrink-0 cursor-pointer rounded-lg bg-rose-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-400"
             >
               {i18n.play.retryButton}
             </button>
@@ -520,9 +650,11 @@ export default function PlayPage() {
                       }
                       frameReady={dungeonUi.frameCheck.stableOk}
                       hintText={
-                        isAiActive
-                          ? dungeonUi.hintText
-                          : i18n.play.practice.status.waitingCamera
+                        !cameraEnabled
+                          ? i18n.play.practice.status.cameraOff
+                          : isAiActive
+                            ? dungeonUi.hintText
+                            : i18n.play.practice.status.waitingCamera
                       }
                       hintTone={isAiActive ? dungeonUi.hintTone : 'neutral'}
                       reducedFx={reducedFx}
@@ -541,11 +673,15 @@ export default function PlayPage() {
                   <SetupCheck
                     snapshot={dungeonUi.frameCheck}
                     aiReady={isAiActive}
+                    postureMode={postureMode}
+                    cameraOff={!cameraEnabled}
                   />
 
                   <CameraView
                     videoRef={videoRef}
                     onReadyChange={handleCameraReadyChange}
+                    enabled={cameraEnabled}
+                    onRequestEnable={() => setCameraEnabled(true)}
                     mirrored
                   >
                     {videoSize && (
@@ -554,6 +690,7 @@ export default function PlayPage() {
                         width={videoSize.width}
                         height={videoSize.height}
                         mirrored
+                        upperBodyOnly={isSeated}
                       />
                     )}
 
@@ -627,11 +764,7 @@ export default function PlayPage() {
                                 : i18n.play.practice.status.poseLostTitle}
                             </p>
                             <p className="mt-0.5 text-xs opacity-90">
-                              {
-                                i18n.play.practice.frameCheck.reasons[
-                                  dungeonActiveWarning
-                                ]
-                              }
+                              {activeReasonMap[dungeonActiveWarning]}
                             </p>
                           </div>
                         </div>
@@ -676,7 +809,7 @@ export default function PlayPage() {
         {/* ═══════════════════════ CHẾ ĐỘ 2: LUYỆN TẬP TỰ DO ═══════════════════════ */}
         {mode === 'practice' && (
           <div className="space-y-4">
-            <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-5 py-3.5">
+            <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3.5 sm:px-5">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm font-semibold text-white">
                   {livenessTexts.runTitle}
@@ -720,7 +853,7 @@ export default function PlayPage() {
                 <button
                   type="button"
                   onClick={practice.startNewRun}
-                  className="cursor-pointer rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
+                  className="cursor-pointer rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
                 >
                   {practiceUi.runActive
                     ? livenessTexts.restartRunButton
@@ -731,7 +864,7 @@ export default function PlayPage() {
                   <button
                     type="button"
                     onClick={practice.stopRun}
-                    className="cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+                    className="cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
                   >
                     {livenessTexts.endRunButton}
                   </button>
@@ -739,6 +872,7 @@ export default function PlayPage() {
               </div>
             </section>
 
+            {/* Chọn động tác luyện tập (tự ẩn Squat & Nâng gối khi ở chế độ Ngồi) */}
             <section
               aria-label={i18n.play.practice.chooseExerciseLabel}
               className="rounded-2xl border border-slate-800 bg-slate-900 p-4"
@@ -750,8 +884,14 @@ export default function PlayPage() {
                 <span className="text-xs text-slate-400">{bodyScopeText}</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                {EXERCISE_IDS.map((id) => {
+              <div
+                className={`grid gap-2 ${
+                  isSeated
+                    ? 'grid-cols-1 sm:grid-cols-3'
+                    : 'grid-cols-2 sm:grid-cols-5'
+                }`}
+              >
+                {allowedExercises.map((id) => {
                   const info = i18n.play.practice.exercises[id];
                   const isSelected = id === selectedExercise;
                   return (
@@ -759,7 +899,7 @@ export default function PlayPage() {
                       key={id}
                       type="button"
                       onClick={() => setSelectedExercise(id)}
-                      className={`cursor-pointer rounded-xl border px-3 py-2.5 text-left transition ${
+                      className={`cursor-pointer rounded-xl border px-3.5 py-3 text-left transition ${
                         isSelected
                           ? 'border-emerald-400 bg-emerald-500/15 text-white shadow-sm'
                           : 'border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-700 hover:bg-slate-800/70'
@@ -794,11 +934,15 @@ export default function PlayPage() {
                 <SetupCheck
                   snapshot={practiceUi.frameCheck}
                   aiReady={isAiActive}
+                  postureMode={postureMode}
+                  cameraOff={!cameraEnabled}
                 />
 
                 <CameraView
                   videoRef={videoRef}
                   onReadyChange={handleCameraReadyChange}
+                  enabled={cameraEnabled}
+                  onRequestEnable={() => setCameraEnabled(true)}
                   mirrored
                 >
                   {videoSize && (
@@ -807,6 +951,7 @@ export default function PlayPage() {
                       width={videoSize.width}
                       height={videoSize.height}
                       mirrored
+                      upperBodyOnly={isSeated}
                     />
                   )}
 
@@ -874,11 +1019,7 @@ export default function PlayPage() {
                               : i18n.play.practice.status.poseLostTitle}
                           </p>
                           <p className="mt-0.5 text-xs opacity-90">
-                            {
-                              i18n.play.practice.frameCheck.reasons[
-                                practiceActiveWarning
-                              ]
-                            }
+                            {activeReasonMap[practiceActiveWarning]}
                           </p>
                         </div>
                       </div>
@@ -908,7 +1049,7 @@ export default function PlayPage() {
                     <button
                       type="button"
                       onClick={practice.reset}
-                      className="cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
+                      className="cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-xs font-semibold text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
                     >
                       {i18n.play.practice.resetButton}
                     </button>
@@ -968,9 +1109,11 @@ export default function PlayPage() {
                     {i18n.play.practice.formHintLabel}
                   </p>
                   <p className="mt-1.5 text-base font-semibold leading-snug">
-                    {isAiActive
-                      ? practiceUi.hintText
-                      : i18n.play.practice.status.waitingCamera}
+                    {!cameraEnabled
+                      ? i18n.play.practice.status.cameraOff
+                      : isAiActive
+                        ? practiceUi.hintText
+                        : i18n.play.practice.status.waitingCamera}
                   </p>
                 </div>
 
@@ -1161,6 +1304,12 @@ export default function PlayPage() {
           </div>
         )}
       </div>
+
+      {/* Modal Hướng dẫn nhanh (tự mở lần đầu vào /play và mở lại từ nút "?") */}
+      {guideOpen && <GuideModal onClose={handleCloseGuide} />}
+
+      {/* Modal Quyền riêng tư */}
+      {privacyOpen && <PrivacyModal onClose={() => setPrivacyOpen(false)} />}
     </main>
   );
 }

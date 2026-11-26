@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CONFIG,
-  EXERCISES,
   RepCounter,
   THRESHOLDS,
   type ExerciseId,
@@ -13,6 +12,7 @@ import { LandmarkOneEuroFilter } from '@/lib/pose/landmarkFilter';
 import {
   FrameStabilityGate,
   evaluateFrameCheck,
+  getExerciseDefForPosture,
   type FrameCheckReason,
   type FrameStabilitySnapshot,
 } from '@/lib/pose/frameCheck';
@@ -25,6 +25,7 @@ import {
   getExerciseDef,
   getLevelFromXp,
   getXpProgressInfo,
+  type PostureMode,
   type XpProgressInfo,
 } from '@/lib/game/engineAdapter';
 import {
@@ -85,7 +86,6 @@ export interface DungeonRunUiState {
   currentHoldMs: number;
   targetHoldMs: number;
   awaitingRest: boolean;
-  /** Thông số trực tiếp từ RepCounter để hiển thị trên bảng Debug Dungeon. */
   liveMetric: number | null;
   peakThreshold: number;
   isAngleExercise: boolean;
@@ -115,7 +115,6 @@ interface DungeonRuntime {
   progress: number;
   metricValue: number | null;
   currentHoldMs: number;
-  /** Đếm số frame liên tiếp đạt p >= 1 nhưng holdMs vẫn = 0 (nhận diện RepCounter chưa armed). */
   peakWithoutHoldFrames: number;
   frameCheck: FrameStabilitySnapshot;
   liveness: LivenessRunSnapshot;
@@ -158,6 +157,7 @@ function createInitialFrameSnapshot(): FrameStabilitySnapshot {
     transitionProgress: 0,
     shoulderWidthRatio: null,
     torsoHeightRatio: null,
+    shoulderEarRatio: null,
   };
 }
 
@@ -319,11 +319,12 @@ function snapshotUi(rt: DungeonRuntime, initialized: boolean): DungeonRunUiState
 }
 
 /**
- * Hook điều phối Dungeon Run (F5a + F5b):
- * - Đã sửa nhánh phát hiện RepCounter chưa mở khóa (`armed = false`) ở bài giữ (side_bend, neck_tilt, overhead_reach)
- *   và bổ sung dữ liệu góc/chỉ số trực tiếp cho bảng Debug Dungeon.
+ * Hook điều phối Dungeon Run (F5a + F5b + chế độ Ngồi F8):
+ * - Tạo lượt và bộ đếm theo `postureMode` ('standing' | 'seated').
+ * - Chế độ Ngồi chỉ sinh 3–5 quái từ 3 bài thân trên, không lặp liên tiếp; thử thách sống vẫn chạy bình thường.
  */
-export function useDungeonRun() {
+export function useDungeonRun(postureMode: PostureMode = 'standing') {
+  const postureModeRef = useRef<PostureMode>(postureMode);
   const counterRef = useRef<RepCounter | null>(null);
   const filterRef = useRef<LandmarkOneEuroFilter | null>(null);
   const stabilityGateRef = useRef<FrameStabilityGate | null>(null);
@@ -342,6 +343,7 @@ export function useDungeonRun() {
       seed: 0,
       isFixedSeed: false,
       isSampleRun: false,
+      postureMode,
       startingTotalXp: 0,
     });
     return snapshotUi(
@@ -409,10 +411,15 @@ export function useDungeonRun() {
     [playSfx]
   );
 
-  const switchCounterToExercise = useCallback((exerciseId: ExerciseId) => {
-    counterRef.current = new RepCounter(EXERCISES[exerciseId]);
-    stabilityGateRef.current?.reset();
-  }, []);
+  const switchCounterToExercise = useCallback(
+    (exerciseId: ExerciseId, mode: PostureMode) => {
+      counterRef.current = new RepCounter(
+        getExerciseDefForPosture(exerciseId, mode)
+      );
+      stabilityGateRef.current?.reset();
+    },
+    []
+  );
 
   const finalizeCurrentRun = useCallback(
     (endedAtMs: number) => {
@@ -510,7 +517,7 @@ export function useDungeonRun() {
 
       const nextMonster = nextDungeon.encounters[nextDungeon.currentIndex];
       if (nextMonster) {
-        switchCounterToExercise(nextMonster.exercise);
+        switchCounterToExercise(nextMonster.exercise, nextDungeon.postureMode);
         rt.hintText = i18n.play.practice.exercises[nextMonster.exercise].readyCue;
         rt.hintTone = 'neutral';
 
@@ -555,9 +562,11 @@ export function useDungeonRun() {
   }, [playSfx]);
 
   const startNewRun = useCallback(
-    (isSampleRun = false) => {
+    (isSampleRun = false, overrideMode?: PostureMode) => {
       clearAllTimers();
 
+      const activeMode = overrideMode ?? postureModeRef.current;
+      postureModeRef.current = activeMode;
       const { seed, isFixed } = createDungeonSeed();
       const store = useGameStore.getState();
 
@@ -565,14 +574,17 @@ export function useDungeonRun() {
         seed,
         isFixedSeed: isFixed,
         isSampleRun,
+        postureMode: activeMode,
         startingTotalXp: store.totalXp,
       });
 
-      const firstExercise = dungeon.encounters[0]?.exercise ?? 'squat';
+      const firstExercise = dungeon.encounters[0]?.exercise ?? 'overhead_reach';
       const livenessSeed = (seed ^ 0x5f3759df) >>> 0;
       const livenessCtrl = new LivenessRunController(livenessSeed, isFixed);
 
-      counterRef.current = new RepCounter(EXERCISES[firstExercise]);
+      counterRef.current = new RepCounter(
+        getExerciseDefForPosture(firstExercise, activeMode)
+      );
       filterRef.current = new LandmarkOneEuroFilter();
       stabilityGateRef.current = new FrameStabilityGate();
       livenessRef.current = livenessCtrl;
@@ -588,12 +600,14 @@ export function useDungeonRun() {
     [clearAllTimers]
   );
 
+  // Khởi tạo lượt đầu tiên phía client và tự tạo lượt mới khi người chơi đổi công tắc Đứng/Ngồi
   useEffect(() => {
-    startNewRun(false);
+    postureModeRef.current = postureMode;
+    startNewRun(false, postureMode);
     return () => {
       clearAllTimers();
     };
-  }, [startNewRun, clearAllTimers]);
+  }, [postureMode, startNewRun, clearAllTimers]);
 
   const togglePause = useCallback(() => {
     unlockGameAudio();
@@ -645,7 +659,7 @@ export function useDungeonRun() {
 
     const swapped = nextDungeon.encounters[nextDungeon.currentIndex];
     if (swapped) {
-      switchCounterToExercise(swapped.exercise);
+      switchCounterToExercise(swapped.exercise, nextDungeon.postureMode);
       rt.hintText = i18n.play.practice.exercises[swapped.exercise].readyCue;
       rt.hintTone = 'neutral';
     }
@@ -682,14 +696,12 @@ export function useDungeonRun() {
 
       let forceSync = false;
 
-      // 1. Làm mượt landmarks bằng One Euro Filter
       if (frame.lm.length >= 33) {
         filter.applyInPlace(frame.lm, frame.t);
       } else {
         filter.reset();
       }
 
-      // 2. Giai đoạn Nghỉ lấy hơi 4s giữa các quái
       if (rt.dungeon.phase === 'transitioning') {
         if (frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
           rt.lastUiSyncAt = frame.t;
@@ -698,7 +710,6 @@ export function useDungeonRun() {
         return;
       }
 
-      // 3. Tạm dừng hoặc đang hiện màn chào sân Boss cuối
       const nowWall = performance.now();
       if (
         rt.paused ||
@@ -710,13 +721,18 @@ export function useDungeonRun() {
       const currentMonster = rt.dungeon.encounters[rt.dungeon.currentIndex];
       if (!currentMonster) return;
       const exerciseId = currentMonster.exercise;
+      const activeMode = rt.dungeon.postureMode;
+      const reasonMap =
+        activeMode === 'seated'
+          ? i18n.play.practice.frameCheck.seatedReasons
+          : i18n.play.practice.frameCheck.reasons;
       const def = counter.def;
       const isHold = def.holdMs > 0;
 
-      // 4. Lớp 0: Kiểm tra khung hình có chống nhấp nháy 400ms
+      // Lớp 0: Kiểm tra khung hình theo đúng chế độ Đứng / Ngồi
       const prevStableOk = rt.frameCheck.stableOk;
       const prevStableReason = rt.frameCheck.stableReason;
-      const rawCheck = evaluateFrameCheck(frame, exerciseId);
+      const rawCheck = evaluateFrameCheck(frame, exerciseId, activeMode);
       const frameSnap = stabilityGate.update(rawCheck, frame.t);
       rt.frameCheck = frameSnap;
 
@@ -740,7 +756,7 @@ export function useDungeonRun() {
         rt.dungeon = { ...rt.dungeon, startedAtMs: frame.t };
       }
 
-      // 5. Lớp 3b: SessionGuard + Thử thách sống theo seed
+      // Lớp 3b: Thử thách sống vẫn chạy bình thường ở chế độ Ngồi
       guard.onFrame(frame);
       const prevChallengeId = rt.liveness.activeChallenge?.id ?? null;
       const livenessStep = livenessCtrl.onFrame(
@@ -798,7 +814,6 @@ export function useDungeonRun() {
         return;
       }
 
-      // 6. Chỉ đếm rep khi khung hình đạt trạng thái "Sẵn sàng"
       if (!frameSnap.stableOk) {
         if (rt.inRep && !rt.awaitingRest) {
           rt.cancelledReason = frameSnap.stableReason ?? 'NO_POSE';
@@ -816,7 +831,7 @@ export function useDungeonRun() {
         rt.peakWithoutHoldFrames = 0;
 
         const reasonKey: FrameCheckReason = frameSnap.stableReason ?? 'NO_POSE';
-        rt.hintText = i18n.play.practice.frameCheck.reasons[reasonKey];
+        rt.hintText = reasonMap[reasonKey];
         rt.hintTone = rt.cancelledReason ? 'error' : 'warning';
 
         if (forceSync || frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
@@ -826,7 +841,6 @@ export function useDungeonRun() {
         return;
       }
 
-      // 7. Đẩy khung hình vào RepCounter của pose-engine.ts
       const pushRes = counter.push(frame);
       const { gate, progress, rep } = pushRes;
       const prevAwaitingRest = rt.awaitingRest;
@@ -856,7 +870,6 @@ export function useDungeonRun() {
           ? THRESHOLDS.HOLD_REARM_PROGRESS
           : CONFIG.endProgress;
 
-        // Phát hiện chính xác khi bài giữ đã đạt đỉnh p >= 1 nhưng RepCounter chưa armed (holdMs vẫn = 0)
         if (isHold && p >= 1 && rt.currentHoldMs === 0 && !rt.awaitingRest && rep === null) {
           rt.peakWithoutHoldFrames += 1;
         } else {
@@ -987,7 +1000,6 @@ export function useDungeonRun() {
             rt.hintTone = 'success';
           }
         } else if (rt.peakWithoutHoldFrames >= 3) {
-          // RepCounter của bài giữ chưa armed vì người tập chưa từng về dưới ngưỡng nghỉ
           rt.inRep = false;
           rt.hintText = i18n.play.practice.status.startFromRest;
           rt.hintTone = 'warning';

@@ -8,8 +8,8 @@ import type {
 import type { CosmeticItemId, CosmeticSlot } from '@/lib/game/cosmetics';
 
 /**
- * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a + F5b + F7).
- * Cập nhật rõ yêu cầu khớp vai–hông cho bài Nghiêng người (side_bend) và bổ sung nhãn Debug góc Dungeon.
+ * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a + F5b + F7 + F8).
+ * Giữ nguyên toàn bộ khóa cũ và bổ sung đầy đủ chuỗi cho Chế độ ngồi, Hướng dẫn, Quyền riêng tư và nút Tắt camera.
  */
 export const i18n = {
   // ── F1: Metadata toàn cục ──
@@ -19,7 +19,7 @@ export const i18n = {
       'RPG vận động 5–10 phút tại bàn học cho sinh viên IT, kiểm chứng động tác bằng camera ngay trên máy.',
   },
 
-  // ── F1 + F5a + F5b + F7: Trang chủ (app/page.tsx) ──
+  // ── F1 + F5a + F5b + F7 + F8: Trang chủ (app/page.tsx) ──
   home: {
     title: 'FitQuest',
     dungeonTag: 'Hầm Ngục Vận Động · Local AI',
@@ -31,6 +31,8 @@ export const i18n = {
     startButton: 'Bắt đầu Dungeon Run',
     practiceButton: 'Chế độ luyện tập tự do',
     leaderboardButton: 'Bảng xếp hạng tuần (Demo)',
+    privacyButton: 'Quyền riêng tư',
+    guideButton: 'Hướng dẫn nhanh',
     privacyNote: 'Video không bao giờ rời khỏi máy bạn.',
     reloadLossNotice: 'Tải lại trang sẽ mất tiến độ',
     levelPrefix: 'Cấp',
@@ -38,7 +40,114 @@ export const i18n = {
     cosmeticCountPrefix: 'Trang bị đã mở:',
   },
 
-  // ── F1 + F2 + F3 + F4: Trang chơi, camera, AI, luyện tập & thử thách sống ──
+  // ── F8: Chế độ tư thế Đứng / Ngồi ──
+  posture: {
+    label: 'Tư thế tập',
+    standing: 'Đứng',
+    seated: 'Ngồi',
+    standingShortDesc: 'Đủ 5 động tác (gồm Squat & Nâng gối).',
+    seatedShortDesc:
+      'Chỉ 3 bài giãn cơ tại bàn: Vươn vai, Nghiêng người, Nghiêng cổ.',
+    seatedSetupGuide:
+      'Mẹo chế độ Ngồi: đặt webcam ngang tầm ngực–vai, ngồi cách khoảng 60–80cm, thấy rõ cả hai vai và hai tay khi giơ lên.',
+    seatedBadge: 'Chế độ Ngồi (Thân trên)',
+  },
+
+  // ── F8: Màn hướng dẫn nhanh (GuideModal) ──
+  guide: {
+    openButtonTitle: 'Mở hướng dẫn',
+    badge: 'Hướng dẫn nhanh · 30 giây',
+    title: 'Chào mừng đến với FitQuest!',
+    skipButton: 'Bỏ qua',
+    startButton: 'Đã hiểu, bắt đầu thôi!',
+    sections: {
+      cameraTitle: '1. Cách đặt camera',
+      cameraStanding:
+        'Chế độ Đứng: lùi cách webcam ~1,5–2m để thấy rõ vai, hông và đầu gối (Squat không cần thấy cổ chân).',
+      cameraSeated:
+        'Chế độ Ngồi: đặt webcam ngang tầm ngực–vai, ngồi cách khoảng 60–80cm, thấy rõ cả hai vai và hai tay khi giơ lên.',
+      exercisesTitle: '2. 5 động tác trong game',
+      exercisesNoteSeated: 'Ở chế độ Ngồi, game tự ẩn Squat & Nâng gối.',
+      exercisesList: [
+        {
+          id: 'squat' as ExerciseId,
+          emoji: '🏋️',
+          name: 'Squat',
+          oneLiner: 'Hạ hông xuống sâu rồi đứng thẳng lên (đứng, chỉ cần vai–hông–gối).',
+        },
+        {
+          id: 'overhead_reach' as ExerciseId,
+          emoji: '🙌',
+          name: 'Vươn vai',
+          oneLiner: 'Vươn hai tay cao quá đầu và giữ liên tục 2 giây (ngồi/đứng).',
+        },
+        {
+          id: 'side_bend' as ExerciseId,
+          emoji: '🤸',
+          name: 'Nghiêng người',
+          oneLiner: 'Nghiêng thân trên sang một bên và giữ liên tục 1,5 giây (ngồi/đứng).',
+        },
+        {
+          id: 'neck_tilt' as ExerciseId,
+          emoji: '🧘',
+          name: 'Nghiêng cổ',
+          oneLiner: 'Nghiêng nhẹ đầu sang bên, thả lỏng vai và giữ 2 giây (ngồi/đứng).',
+        },
+        {
+          id: 'high_knees' as ExerciseId,
+          emoji: '🏃',
+          name: 'Nâng gối',
+          oneLiner: 'Nâng luân phiên đầu gối cao ngang hông rồi hạ xuống (đứng).',
+        },
+      ],
+      repRuleTitle: '3. Cách tính rep',
+      repRuleDesc:
+        'Động tác động (Squat, Nâng gối) tính khi xuống rồi lên đủ chu kỳ. Động tác giữ (Vươn vai, Nghiêng người, Nghiêng cổ) tính NGAY khi giữ liên tục đủ thời gian (1,5s hoặc 2s), thả lỏng sau đó không bị hủy rep.',
+      livenessTitle: '4. Thử thách sống là gì?',
+      livenessDesc:
+        'Mỗi lượt có 0–2 lần ngẫu nhiên hiện lời nhắc "Giơ tay trái/phải lên" trong 5 giây (giữ cao hơn vai 0,5s). Bộ đếm rep tạm dừng khi thử thách hiện, giúp xác nhận có người thật đang tập.',
+      xpCapTitle: '5. Vì sao XP giới hạn 600 mỗi lần mở trang?',
+      xpCapDesc:
+        'Để khuyến khích bạn tập vừa sức 5–10 phút giữa giờ code và tránh cày gian lận. Chạm 600 XP bạn vẫn có thể tập tự do, nhưng hệ thống sẽ nhắc nghỉ ngơi.',
+    },
+  },
+
+  // ── F8: Khung Quyền riêng tư (PrivacyModal & dòng xin camera) ──
+  privacy: {
+    buttonLabel: 'Quyền riêng tư',
+    badge: 'Minh bạch · Xử lý cục bộ 100%',
+    title: 'Quyền riêng tư & Dữ liệu trong FitQuest',
+    cameraRequestLine:
+      'Video xử lý hoàn toàn trong trình duyệt của bạn — không gửi đi đâu, không ghi hình, không lưu dữ liệu.',
+    closeButton: 'Đã hiểu',
+    points: [
+      {
+        icon: '🖥️',
+        title: 'Xử lý trực tiếp trên trình duyệt',
+        desc: 'Khung hình webcam được MediaPipe đọc ngay trong RAM trình duyệt bằng file cục bộ (/wasm và /models).',
+      },
+      {
+        icon: '🚫',
+        title: 'Không gửi hình ảnh qua mạng',
+        desc: 'Ứng dụng không có máy chủ backend và không gửi bất kỳ ảnh, video hay tọa độ khớp nào ra mạng ngoài.',
+      },
+      {
+        icon: '🎞️',
+        title: 'Không ghi hình, không chụp ảnh',
+        desc: 'Camera chỉ phát trực tiếp để AI đếm rep. Khi bạn bấm "Tắt camera" hoặc rời trang, toàn bộ luồng camera được dừng ngay lập tức.',
+      },
+      {
+        icon: '🧹',
+        title: 'Không lưu dữ liệu cá nhân',
+        desc: 'Không dùng localStorage, cookies hay cơ sở dữ liệu. Tải lại trang sẽ xóa sạch tên, XP, trang bị và điểm tuần.',
+      },
+    ],
+    honestLimitTitle: 'Giới hạn trung thực của bản prototype',
+    honestLimitDesc:
+      'Vì chạy hoàn toàn trên trình duyệt để bảo vệ quyền riêng tư và dễ chạy thử nội bộ, hệ thống không thể chống gian lận tuyệt đối (người dùng am hiểu có thể sửa bộ nhớ bằng DevTools). Sản phẩm thực tế cần máy chủ xác thực.',
+  },
+
+  // ── F1 + F2 + F3 + F4 + F8: Trang chơi, camera, AI, luyện tập & thử thách sống ──
   play: {
     placeholder: 'Camera sắp có',
     backHome: 'Quay lại trang chủ',
@@ -48,7 +157,7 @@ export const i18n = {
 
     title: 'FitQuest',
     privacyNotice:
-      'Video xử lý hoàn toàn trên máy bạn — không bao giờ gửi qua mạng.',
+      'Video xử lý hoàn toàn trên máy bạn — không gửi qua mạng, không ghi hình, không lưu dữ liệu.',
     retryButton: 'Thử lại',
     errorDetailPrefix: 'Chi tiết lỗi gốc:',
 
@@ -59,14 +168,23 @@ export const i18n = {
 
     camera: {
       starting: 'Đang mở camera...',
+      turnOffButton: 'Tắt camera',
+      turnOnButton: 'Bật camera',
+      offTitle: 'Camera đang tắt',
+      offDesc:
+        'Đèn camera đã tắt và không có khung hình nào được xử lý. Bấm "Bật camera" khi bạn sẵn sàng tiếp tục tập.',
       unsupported:
         'Trình duyệt không hỗ trợ camera hoặc trang chưa chạy trên localhost / HTTPS.',
       permissionDenied:
-        'Bạn đã chặn quyền truy cập camera. Hãy bấm biểu tượng ổ khóa hoặc camera trên thanh địa chỉ trình duyệt để cho phép, rồi bấm "Thử lại".',
+        'Bạn đã chặn quyền truy cập camera. Hãy bấm biểu tượng ổ khóa hoặc camera trên thanh địa chỉ trình duyệt để chọn "Cho phép", rồi bấm "Thử lại".',
       notFound:
-        'Không tìm thấy camera trên thiết bị. Hãy kiểm tra lại kết nối webcam rồi bấm "Thử lại".',
+        'Không tìm thấy webcam trên thiết bị này. Hãy kiểm tra lại dây cắm hoặc cài đặt camera trong hệ thống rồi bấm "Thử lại".',
       inUse:
         'Camera đang được ứng dụng khác sử dụng (ví dụ: Zoom, Google Meet, MS Teams). Hãy tắt ứng dụng đó rồi bấm "Thử lại".',
+      overconstrained:
+        'Webcam không hỗ trợ độ phân giải yêu cầu. Hãy thử lại hoặc kiểm tra trình điều khiển camera.',
+      securityError:
+        'Trình duyệt chặn mở camera vì trang không chạy trên địa chỉ an toàn (localhost hoặc HTTPS).',
       genericError:
         'Không thể khởi động camera. Hãy kiểm tra thiết bị và quyền truy cập rồi thử lại.',
     },
@@ -104,11 +222,12 @@ export const i18n = {
       bodyScopeFull: 'Cần thấy thân & chân',
       bodyScopeSquat: 'Chỉ cần thấy vai, hông và gối (không cần cổ chân)',
       bodyScopeTorso: 'Cần thấy rõ cả vai và hông (lùi nhẹ nếu bị khuất hông)',
-      bodyScopeUpper: 'Chỉ cần thấy thân trên',
+      bodyScopeUpper: 'Chỉ cần thấy thân trên (ngồi cách 60–80cm)',
       holdUnit: 's',
 
       status: {
         waitingCamera: 'Đang chờ camera và AI sẵn sàng...',
+        cameraOff: 'Camera đang tắt. Bấm "Bật camera" để tiếp tục.',
         holding: 'Giữ nguyên tư thế...',
         holdComplete: 'Đã tính rep! Thả lỏng về tư thế nghỉ để tập rep tiếp theo',
         awaitingRest: 'Đã xong rep — hãy thả lỏng về tư thế nghỉ trước khi tập tiếp',
@@ -154,10 +273,10 @@ export const i18n = {
         },
         side_bend: {
           name: 'Nghiêng người',
-          meta: 'Vai–hông · Giữ 1,5s',
+          meta: 'Thân trên · Giữ 1,5s',
           scope: 'torso',
           readyCue:
-            'Đứng/ngồi thẳng rõ cả vai và hông, sau đó nghiêng thân sang bên giữ 1,5 giây',
+            'Ngồi hoặc đứng thẳng, sau đó nghiêng thân sang một bên và giữ liên tục 1,5 giây',
           depthCue: 'Nghiêng người thêm một chút',
           peakCue: 'Giữ nguyên tư thế nghiêng...',
           notDeepEnough: 'Nghiêng người thêm một chút',
@@ -218,16 +337,29 @@ export const i18n = {
         notReadyBadge: 'Chưa đạt',
         stabilizingBadge: 'Đang ổn định...',
         readyMessage: 'Khung hình đạt chuẩn — có thể bắt đầu đếm rep.',
+        readyMessageSeated:
+          'Khung hình thân trên đạt chuẩn — bắt đầu giãn cơ tại bàn nào!',
         reasons: {
           NO_POSE: 'Không thấy người trong khung hình. Hãy ngồi hoặc đứng vào trước camera.',
           LOW_VISIBILITY:
-            'Thiếu khớp bắt buộc (độ tin cậy < 0,6). Hãy bật thêm đèn và để lộ rõ các khớp cần kiểm tra (ví dụ: vai và hông).',
+            'Thiếu khớp bắt buộc (độ tin cậy < 0,6). Hãy bật thêm đèn và để lộ rõ các khớp cần kiểm tra.',
           OUT_OF_FRAME:
             'Khớp bắt buộc đang sát mép hoặc ra ngoài khung hình. Hãy lùi nhẹ và căn lại vị trí ở giữa khung.',
           TOO_FAR:
             'Bạn đang đứng quá xa camera (thân quá nhỏ trong khung). Hãy tiến lại gần hơn.',
           TOO_CLOSE:
             'Bạn đang đứng quá gần camera. Hãy lùi ra xa một chút để thấy rõ cơ thể.',
+        },
+        seatedReasons: {
+          NO_POSE: 'Chưa thấy bạn trước webcam. Hãy ngồi vào giữa khung hình.',
+          LOW_VISIBILITY:
+            'Thiếu khớp thân trên (vai, mặt hoặc tay khi giơ lên). Hãy chỉnh webcam ngang tầm ngực–vai và bật thêm đèn.',
+          OUT_OF_FRAME:
+            'Vai hoặc tay đang sát mép khung hình. Hãy ngồi cách webcam khoảng 60–80cm để thấy rõ cả hai vai và tay.',
+          TOO_FAR:
+            'Bạn đang ngồi quá xa webcam (vai quá nhỏ). Hãy ngồi lại gần khoảng 60–80cm.',
+          TOO_CLOSE:
+            'Bạn đang ngồi quá gần webcam (vai quá lớn). Hãy lùi ghế ra khoảng 60–80cm để thấy rõ cả hai vai và hai tay.',
         },
       },
 
@@ -450,7 +582,7 @@ export const i18n = {
       side_bend: {
         name: 'Rắn Lắc',
         bossName: 'Mãnh Xà Bóng Đêm',
-        actionLabel: 'Nghiêng người giữ 1,5s để né độc (cần thấy rõ vai & hông)',
+        actionLabel: 'Nghiêng người giữ 1,5s để né độc',
       },
       neck_tilt: {
         name: 'Bóng Ma Cứng Cổ',

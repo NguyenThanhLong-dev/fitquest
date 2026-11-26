@@ -1,10 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { useGameStore } from '@/lib/game/store';
 import { getXpProgressInfo, type Rarity } from '@/lib/game/engineAdapter';
 import { COSMETIC_BY_ID } from '@/lib/game/cosmetics';
 import { unlockGameAudio } from '@/lib/game/sound';
+import { PrivacyModal } from '@/components/game/PrivacyModal';
+import { GuideModal } from '@/components/game/GuideModal';
 import { i18n } from '@/lib/i18n';
 
 const WEEKLY_REWARD_ICONS: Record<Rarity, string> = {
@@ -15,14 +18,16 @@ const WEEKLY_REWARD_ICONS: Record<Rarity, string> = {
 };
 
 /**
- * Trang chủ ("/") — Phong cách Hầm Ngục tối màu (F5b + link Bảng xếp hạng tuần F7):
- * - Tiêu đề FitQuest, câu cốt truyện "Hang động Cứng Cổ đang chờ bạn…",
- *   nút "Bắt đầu Dungeon Run" nổi bật, nút luyện tập tự do và nút sang /leaderboard.
- * - Hiển thị trạng thái nhân vật tạm trong RAM (cấp độ, XP, trang bị & huy hiệu thưởng tuần).
+ * Trang chủ ("/") — Hoàn thiện F8:
+ * - Công tắc "Đứng / Ngồi" (mặc định Đứng, lưu trong Zustand RAM) kèm hướng dẫn riêng khi chọn Ngồi.
+ * - Nút mở khung "Quyền riêng tư" và "Hướng dẫn nhanh".
+ * - Bố cục co giãn tốt trên điện thoại, nút bấm đủ lớn.
  */
 export default function HomePage() {
   const displayName = useGameStore((state) => state.displayName);
   const setDisplayName = useGameStore((state) => state.setDisplayName);
+  const postureMode = useGameStore((state) => state.postureMode);
+  const setPostureMode = useGameStore((state) => state.setPostureMode);
   const totalXp = useGameStore((state) => state.totalXp);
   const cosmeticInventory = useGameStore((state) => state.cosmeticInventory);
   const equippedCosmetics = useGameStore((state) => state.equippedCosmetics);
@@ -30,6 +35,9 @@ export default function HomePage() {
   const equippedWeeklyRewardId = useGameStore(
     (state) => state.equippedWeeklyRewardId
   );
+
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const xpInfo = getXpProgressInfo(totalXp);
   const equippedTitle = equippedCosmetics.title
@@ -47,8 +55,7 @@ export default function HomePage() {
   const totalCosmeticCount = cosmeticInventory.length + weeklyRewards.length;
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/70 px-4 py-10 text-slate-100">
-      {/* Ánh sáng hầm ngục nhẹ bằng CSS thuần (không tải ảnh ngoài) */}
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/70 px-4 py-8 text-slate-100 sm:py-10">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute -top-32 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-emerald-500/10 blur-3xl"
@@ -58,20 +65,20 @@ export default function HomePage() {
         className="pointer-events-none absolute -bottom-32 right-1/4 h-72 w-72 rounded-full bg-fuchsia-500/10 blur-3xl"
       />
 
-      <div className="relative w-full max-w-lg space-y-6 rounded-3xl border border-slate-800/90 bg-slate-900/90 p-8 shadow-2xl backdrop-blur">
+      <div className="relative w-full max-w-lg space-y-5 rounded-3xl border border-slate-800/90 bg-slate-900/90 p-6 shadow-2xl backdrop-blur sm:p-8">
         {/* Huy hiệu, Tiêu đề & Câu cốt truyện Hầm Ngục */}
-        <div className="space-y-3 text-center">
+        <div className="space-y-2.5 text-center">
           <span className="inline-block rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-emerald-300">
             ⚔️ {i18n.home.dungeonTag}
           </span>
 
-          <h1 className="text-5xl font-black tracking-tight text-white">
+          <h1 className="text-4xl font-black tracking-tight text-white sm:text-5xl">
             <span className="bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-clip-text text-transparent">
               {i18n.home.title}
             </span>
           </h1>
 
-          <p className="text-lg font-extrabold text-amber-200">
+          <p className="text-base font-extrabold text-amber-200 sm:text-lg">
             {i18n.home.storyLine}
           </p>
 
@@ -80,7 +87,7 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* Trạng thái nhân vật tạm trong RAM (Cấp độ, XP, trang bị & thưởng tuần đang mặc) */}
+        {/* Trạng thái nhân vật tạm trong RAM */}
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/85 px-4 py-3">
           <div className="flex items-center gap-3">
             <div
@@ -126,7 +133,52 @@ export default function HomePage() {
           </span>
         </div>
 
-        {/* Ô nhập tên hiệp sĩ tùy chọn (lưu trong Zustand RAM) */}
+        {/* Công tắc Đứng / Ngồi (mặc định Đứng, lưu trong Zustand RAM) */}
+        <div className="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/75 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-bold text-slate-200">
+              {i18n.posture.label}
+            </span>
+            <div className="inline-flex rounded-xl border border-slate-800 bg-slate-900 p-1">
+              <button
+                type="button"
+                onClick={() => setPostureMode('standing')}
+                className={`cursor-pointer rounded-lg px-4 py-2 text-xs font-extrabold transition sm:text-sm ${
+                  postureMode === 'standing'
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                🧍 {i18n.posture.standing}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPostureMode('seated')}
+                className={`cursor-pointer rounded-lg px-4 py-2 text-xs font-extrabold transition sm:text-sm ${
+                  postureMode === 'seated'
+                    ? 'bg-sky-400 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                🪑 {i18n.posture.seated}
+              </button>
+            </div>
+          </div>
+
+          <p className="text-xs leading-relaxed text-slate-300">
+            {postureMode === 'seated'
+              ? i18n.posture.seatedShortDesc
+              : i18n.posture.standingShortDesc}
+          </p>
+
+          {postureMode === 'seated' && (
+            <p className="rounded-xl border border-sky-500/30 bg-sky-950/40 px-3 py-2 text-xs leading-relaxed text-sky-200">
+              💡 {i18n.posture.seatedSetupGuide}
+            </p>
+          )}
+        </div>
+
+        {/* Ô nhập tên hiệp sĩ tùy chọn */}
         <div className="space-y-2">
           <label
             htmlFor="display-name"
@@ -145,7 +197,7 @@ export default function HomePage() {
           />
         </div>
 
-        {/* Nút Bắt đầu Dungeon Run + Bảng xếp hạng tuần (Demo) + Chế độ luyện tập tự do */}
+        {/* Nút Bắt đầu Dungeon Run + Bảng xếp hạng + Luyện tập */}
         <div className="space-y-2.5">
           <Link
             href="/play"
@@ -159,7 +211,7 @@ export default function HomePage() {
             <Link
               href="/leaderboard"
               onClick={unlockGameAudio}
-              className="block w-full rounded-xl border border-amber-400/50 bg-amber-500/15 px-4 py-2.5 text-center text-sm font-bold text-amber-200 transition hover:bg-amber-500/25"
+              className="block w-full rounded-xl border border-amber-400/50 bg-amber-500/15 px-4 py-3 text-center text-sm font-bold text-amber-200 transition hover:bg-amber-500/25"
             >
               🏆 {i18n.home.leaderboardButton}
             </Link>
@@ -167,10 +219,29 @@ export default function HomePage() {
             <Link
               href="/play?mode=practice"
               onClick={unlockGameAudio}
-              className="block w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-center text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
+              className="block w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-center text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
             >
               {i18n.home.practiceButton}
             </Link>
+          </div>
+
+          {/* Nút mở Hướng dẫn nhanh & Quyền riêng tư */}
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setGuideOpen(true)}
+              className="cursor-pointer rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-white"
+            >
+              ❓ {i18n.home.guideButton}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPrivacyOpen(true)}
+              className="cursor-pointer rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-white"
+            >
+              🔒 {i18n.home.privacyButton}
+            </button>
           </div>
         </div>
 
@@ -182,6 +253,9 @@ export default function HomePage() {
           </p>
         </div>
       </div>
+
+      {guideOpen && <GuideModal onClose={() => setGuideOpen(false)} />}
+      {privacyOpen && <PrivacyModal onClose={() => setPrivacyOpen(false)} />}
     </main>
   );
 }

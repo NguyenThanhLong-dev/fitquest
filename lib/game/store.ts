@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   ALL_EXERCISE_IDS,
   ENGINE_XP_CAP,
+  type PostureMode,
   type Reward,
   type RunResult,
 } from '@/lib/game/engineAdapter';
@@ -25,10 +26,6 @@ import {
   type WeekendClaimResult,
 } from '@/lib/game/leaderboard';
 
-/**
- * Thống kê tạm thời của thử thách sống (lớp 3b) trong lượt tập hiện tại.
- * Lưu hoàn toàn trong RAM (không persistence).
- */
 export interface LivenessRunStats {
   seed: number | null;
   scheduledCount: number;
@@ -57,58 +54,46 @@ const createEmptyEquipped = (): EquippedCosmetics => ({
 
 /**
  * Trạng thái nhân vật & trò chơi trong bộ nhớ (Zustand — KHÔNG dùng persist / localStorage).
- * Giữ nguyên toàn bộ khóa F1–F5b và bổ sung trạng thái Bảng xếp hạng tuần & thưởng tuần F7.
+ * Bổ sung cho F8: `postureMode` (mặc định 'standing') và `hasSeenGuide` (chỉ trong RAM).
  */
 interface GameState {
   displayName: string;
   setDisplayName: (name: string) => void;
 
-  /** Tổng XP chính thức đã xác thực bởi finalizeRun trong lần tải trang này. */
+  /** Chế độ tư thế: 'standing' (Đứng - mặc định) hoặc 'seated' (Ngồi tại bàn). */
+  postureMode: PostureMode;
+  setPostureMode: (mode: PostureMode) => void;
+
+  /** Đã xem màn hướng dẫn trong lần tải trang này chưa (hiện tự động lần đầu vào /play). */
+  hasSeenGuide: boolean;
+  markGuideSeen: () => void;
+
   totalXp: number;
-
-  /** Tổng số rep đã xác thực theo từng động tác (tính STR/AGI/VIT/WIS). */
   verifiedReps: VerifiedRepCounts;
-
-  /** Số lượt Dungeon Run đã hoàn tất trong lần tải trang này. */
   runsCompleted: number;
-
-  /** Dữ liệu tổng kết lượt gần nhất (lưu tạm trong RAM). */
   lastSummary: DungeonSummaryData | null;
 
-  /** Kết quả thử thách sống của lượt tập hiện tại. */
   livenessStats: LivenessRunStats;
   startLivenessRun: (seed: number, scheduledCount: number) => void;
   recordChallengeOutcome: (passed: boolean) => void;
   resetLivenessRun: () => void;
 
-  /** Cài đặt âm thanh Web Audio API (chỉ trong RAM). */
   soundEnabled: boolean;
   toggleSound: () => void;
 
-  /** Kho vật phẩm cosmetic từ rương Dungeon Run F5b (chỉ trong RAM). */
   cosmeticInventory: CosmeticItem[];
   equippedCosmetics: EquippedCosmetics;
   claimCosmetic: (item: CosmeticItem) => void;
   equipCosmetic: (item: CosmeticItem) => void;
 
-  // ── F7: Bảng xếp hạng minh họa & Thưởng tuần (chỉ trong RAM) ──
-  /** Tổng XP verified tích lũy trong tuần mô phỏng hiện tại. */
   weeklyVerifiedXp: number;
-  /** Ngày demo hiện tại (bắt đầu từ 1, tăng khi bấm "Sang ngày mới (demo)"). */
   currentDemoDay: number;
-  /** Tập các "ngày demo" đã có ít nhất 1 phiên verified. */
   weeklyActiveDays: Set<number>;
-  /** Seed cố định sinh 20 người chơi giả (mặc định 2026, đổi được ở Debug). */
   leaderboardSeed: number;
-  /** Đánh dấu tuần này đã nhận thưởng cuối tuần hay chưa (khóa nút đến khi Đặt lại tuần). */
   weeklyRewardClaimed: boolean;
-  /** Phần thưởng tuần vừa nhận gần nhất (kiểu Reward gốc từ pose-engine.ts). */
   lastWeeklyReward: Reward | null;
-  /** Danh sách phần thưởng tuần cosmetic đã mở (kiểu Reward gốc từ pose-engine.ts, không tạo kiểu mới). */
   weeklyRewards: Reward[];
-  /** ID phần thưởng tuần đang đeo làm huy hiệu/danh hiệu trên nhân vật. */
   equippedWeeklyRewardId: string | null;
-  /** Thông tin đổi hạng gần nhất để hiển thị hiệu ứng ngắn trên /leaderboard. */
   lastRankChange: RankChangeInfo | null;
 
   advanceDemoDay: () => void;
@@ -118,10 +103,6 @@ interface GameState {
   simulateWeekendReward: () => WeekendClaimResult;
   equipWeeklyReward: (rewardId: string) => void;
 
-  /**
-   * Áp dụng kết quả đã được finalizeRun() xác nhận vào hồ sơ nhân vật & bảng xếp hạng tuần trong RAM.
-   * Phiên review / rejected KHÔNG cộng XP, KHÔNG tăng chỉ số và KHÔNG cộng điểm tuần.
-   */
   commitDungeonRun: (
     engineResult: RunResult,
     countedRepsByExercise: VerifiedRepCounts,
@@ -142,6 +123,13 @@ function toWeeklyState(state: GameState): WeeklyProgressState {
 export const useGameStore = create<GameState>((set, get) => ({
   displayName: '',
   setDisplayName: (name) => set({ displayName: name }),
+
+  postureMode: 'standing',
+  setPostureMode: (mode) => set({ postureMode: mode }),
+
+  hasSeenGuide: false,
+  markGuideSeen: () => set({ hasSeenGuide: true }),
+
   totalXp: 0,
   verifiedReps: createEmptyVerifiedReps(),
   runsCompleted: 0,
@@ -154,7 +142,6 @@ export const useGameStore = create<GameState>((set, get) => ({
   cosmeticInventory: [],
   equippedCosmetics: createEmptyEquipped(),
 
-  // Khởi tạo trạng thái F7
   weeklyVerifiedXp: 0,
   currentDemoDay: 1,
   weeklyActiveDays: new Set<number>(),
@@ -349,7 +336,6 @@ export const useGameStore = create<GameState>((set, get) => ({
         nextVerifiedReps[ex] += countedRepsByExercise[ex];
       }
 
-      // Cập nhật điểm tuần & ngày hoạt động cho Bảng xếp hạng F7 (chỉ phiên verified)
       const oldRank = computeCurrentRank(
         state.weeklyVerifiedXp,
         state.weeklyActiveDays,

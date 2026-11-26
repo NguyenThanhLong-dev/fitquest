@@ -1,6 +1,6 @@
 /**
  * File nối DUY NHẤT giữa tầng game (lib/game/) và lõi pose-engine.ts.
- * Giữ nguyên toàn bộ API F5a/F5b và nối thêm API bảng xếp hạng + thưởng tuần cho F7.
+ * Giữ nguyên toàn bộ API F5a/F5b/F7 và bổ sung kiểu PostureMode + danh sách động tác theo chế độ cho F8.
  */
 import {
   CONFIG,
@@ -42,6 +42,9 @@ export type {
 
 export { SessionGuard };
 
+/** Chế độ tư thế tập: mặc định 'standing' (Đứng), hỗ trợ 'seated' (Ngồi tại bàn học). */
+export type PostureMode = 'standing' | 'seated';
+
 /** Danh sách 5 ExerciseId chuẩn của engine (không đổi ID). */
 export const ALL_EXERCISE_IDS: readonly ExerciseId[] = [
   'squat',
@@ -50,6 +53,18 @@ export const ALL_EXERCISE_IDS: readonly ExerciseId[] = [
   'neck_tilt',
   'high_knees',
 ] as const;
+
+/** Danh sách 3 động tác hợp lệ cho chế độ Ngồi (ẩn squat và nâng gối). */
+export const SEATED_EXERCISE_IDS: readonly ExerciseId[] = [
+  'overhead_reach',
+  'side_bend',
+  'neck_tilt',
+] as const;
+
+/** Trả về danh sách động tác hợp lệ theo chế độ Đứng hoặc Ngồi. */
+export function getAllowedExercises(mode: PostureMode): readonly ExerciseId[] {
+  return mode === 'seated' ? SEATED_EXERCISE_IDS : ALL_EXERCISE_IDS;
+}
 
 /** Giới hạn XP tối đa mỗi lần tải trang, đọc trực tiếp từ CONFIG.xpCap của engine. */
 export const ENGINE_XP_CAP: number = CONFIG.xpCap;
@@ -99,9 +114,6 @@ export function getRewardForRank(rank: number, total: number): Reward {
   return rewardForRank(rank, total);
 }
 
-/**
- * Thông tin thanh tiến độ XP đến cấp tiếp theo (dùng 100% levelFromXp / xpForLevel / CONFIG.xpCap).
- */
 export interface XpProgressInfo {
   xp: number;
   cap: number;
@@ -139,10 +151,6 @@ export function getXpProgressInfo(totalXp: number): XpProgressInfo {
   };
 }
 
-/**
- * Chuyển RepResult thành RepSummary theo đúng hợp đồng §4 của AGENT_SPEC
- * (lược bỏ startT, endT, counted, flags trước khi gửi vào finalizeRun).
- */
 export function toRepSummary(rep: RepResult): RepSummary {
   return {
     exercise: rep.exercise,
@@ -163,11 +171,6 @@ export interface CombinedGuardEvaluation {
   flags: string[];
 }
 
-/**
- * Gộp verdict từ SessionGuard (ảnh tĩnh, FPS thấp, rep nhiễu, lặp quỹ đạo)
- * với số lần thất bại thử thách sống của lớp F4 theo đúng trọng số (+0.5 / lần)
- * của SessionGuard.verdict() trong pose-engine.ts.
- */
 export function combineGuardVerdict(
   guardResult: { verdict: Verdict; score: number; flags: string[] },
   livenessFailedCount: number
@@ -186,10 +189,6 @@ export function combineGuardVerdict(
   return { verdict, score, flags };
 }
 
-/**
- * Gọi finalizeRun của pose-engine.ts một lần khi kết thúc lượt.
- * Chỉ truyền vào các rep hợp lệ (counted === true) đã chuyển sang RepSummary.
- */
 export function finalizeDungeonRun(
   countedReps: readonly RepResult[],
   durationMs: number,

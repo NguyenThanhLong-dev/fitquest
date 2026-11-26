@@ -1,6 +1,7 @@
 /**
  * Toàn bộ logic game Dungeon Run (thuần TypeScript, KHÔNG phụ thuộc React hay DOM).
- * Mọi lệnh gọi pose-engine.ts đều đi qua lib/game/engineAdapter.ts.
+ * Giữ nguyên toàn bộ logic F5a và bổ sung hỗ trợ chế độ Ngồi (postureMode) cho F8:
+ * chỉ tạo & đổi quái từ danh sách động tác hợp lệ, vẫn đảm bảo 3–5 nhiệm vụ và không lặp liên tiếp.
  */
 import {
   ALL_EXERCISE_IDS,
@@ -9,46 +10,33 @@ import {
   createEngineRng,
   createEngineSeed,
   finalizeDungeonRun,
+  getAllowedExercises,
   getExerciseDef,
   getLevelFromXp,
   type ExerciseId,
+  type PostureMode,
   type RepResult,
   type RunResult,
   type Verdict,
 } from '@/lib/game/engineAdapter';
 
-// ───────────────────────────── Cấu hình cân bằng game (dễ chỉnh) ─────────────────────────────
 export const DUNGEON_CONFIG = {
-  /** Đặt số nguyên (ví dụ 202605) để cố định seed khi test; đặt null để tự random. */
   fixedSeed: null as number | null,
-  /** Số nhiệm vụ (quái) trong một lượt thường: 3 đến 5. */
   minEncounters: 3,
   maxEncounters: 5,
-  /** Thời gian trễ (ms) sau khi hạ 1 quái trước khi sang quái kế tiếp (~1s). */
   transitionDelayMs: 1000,
-  /** Sát thương cơ bản trước khi nhân chất lượng rep, combo và chí mạng. */
   baseDamage: 30,
-  /** Ngưỡng chất lượng để kích hoạt đòn Chí mạng. */
   critQualityThreshold: 0.9,
-  /** Hệ số nhân sát thương khi Chí mạng. */
   critMultiplier: 1.5,
-  /** Mỗi bậc combo tăng +5% sát thương, tối đa +50% (KHÔNG ảnh hưởng XP). */
   comboStepBonus: 0.05,
   maxComboBonusSteps: 10,
-  /** Số lần dùng kỹ năng "Đổi quái miễn phí" trong mỗi lượt. */
   freeSwapsPerRun: 1,
-  /** Số mục tiêu phụ ngẫu nhiên theo seed trong mỗi lượt. */
   sideObjectiveCount: 2,
-  /** Chế độ Debug "Lượt mẫu": 3 quái, mỗi quái cần ~2 rep (HP = 48). */
   sampleEncounterCount: 3,
   sampleMonsterHp: 48,
   sampleTargetReps: 2,
 } as const;
 
-/**
- * Số rep mục tiêu (5–8 tùy quái) cho quái thường.
- * Boss (quái cuối) có HP gấp đôi quái thường.
- */
 export const BASE_TARGET_REPS_BY_EXERCISE: Record<ExerciseId, number> = {
   squat: 6,
   overhead_reach: 5,
@@ -57,14 +45,13 @@ export const BASE_TARGET_REPS_BY_EXERCISE: Record<ExerciseId, number> = {
   high_knees: 8,
 };
 
-// ───────────────────────────── Kiểu dữ liệu RPG ─────────────────────────────
 export type VerifiedRepCounts = Record<ExerciseId, number>;
 
 export interface CharacterStats {
-  str: number; // squat + high_knees
-  agi: number; // side_bend
-  vit: number; // neck_tilt
-  wis: number; // overhead_reach
+  str: number;
+  agi: number;
+  vit: number;
+  wis: number;
 }
 
 export type SkillId =
@@ -77,7 +64,6 @@ export type SkillId =
 export interface SkillStatus {
   id: SkillId;
   requiredLevel: number;
-  /** Chỉ "free_swap" hoạt động thật ở F5a; các kỹ năng khác hiển thị "Sắp có". */
   implemented: boolean;
   unlocked: boolean;
 }
@@ -97,7 +83,6 @@ export interface SideObjectiveProgress {
 }
 
 export interface MonsterEncounter {
-  /** Số thứ tự 1-based trong lượt (1..N). */
   stageNumber: number;
   exercise: ExerciseId;
   isBoss: boolean;
@@ -114,11 +99,8 @@ export interface DamageEvent {
   isCrit: boolean;
   combo: number;
   comboMultiplier: number;
-  /** XP tạm thời của rep theo engine (đã bị chặn nếu chạm cap, KHÔNG nhân combo). */
   tentativeXpAdded: number;
-  /** Đòn đánh này có vừa kết liễu quái hiện tại không. */
   defeatedMonster: boolean;
-  /** Thông báo chạm giới hạn XP ngay tại đòn đánh này. */
   hitXpCap: boolean;
   atMs: number;
 }
@@ -129,32 +111,25 @@ export interface DungeonRunState {
   seed: number;
   isFixedSeed: boolean;
   isSampleRun: boolean;
+  postureMode: PostureMode;
   phase: DungeonPhase;
   encounters: MonsterEncounter[];
   currentIndex: number;
-  /** Mốc thời gian bắt đầu lượt (ms) để tính durationMs gửi vào finalizeRun. */
   startedAtMs: number | null;
-  /** Nếu đang trong ~1s chuyển quái, mốc kết thúc chờ (ms). */
   transitionUntilMs: number | null;
-  /** Combo hiện tại (chỉ ảnh hưởng sát thương, KHÔNG ảnh hưởng XP). */
   combo: number;
   maxCombo: number;
-  /** Bộ đếm phục vụ mục tiêu phụ và màn tổng kết. */
   critCount: number;
   bossCritCount: number;
   highQualityCount: number;
   swapsRemaining: number;
   usedSwap: boolean;
   sideObjectives: SideObjectiveProgress[];
-  /** Danh sách toàn bộ rep hợp lệ (counted) và bị loại (!counted) trong lượt. */
   countedReps: RepResult[];
   rejectedRepCount: number;
   cancelledRepCount: number;
-  /** Tổng XP tạm cộng dồn trên UI (đã tự kẹp theo XP cap, sẽ đối chiếu với finalizeRun). */
   tentativeXpEarned: number;
-  /** XP đã có trước khi bắt đầu lượt này (đọc từ Zustand). */
   startingTotalXp: number;
-  /** Sự kiện đòn đánh gần nhất để hiện số sát thương, "Chí mạng", "+XP" nổi. */
   lastHit: DamageEvent | null;
 }
 
@@ -173,11 +148,8 @@ export interface DungeonSummaryData {
   totalMonsters: number;
   verdict: Verdict;
   accepted: boolean;
-  /** Mã lý do gộp từ SessionGuard + Liveness + finalizeRun (dịch sang tiếng Việt ở UI). */
   reasonCodes: string[];
-  /** XP cộng dồn tạm trên UI trong lúc chơi. */
   tentativeXp: number;
-  /** XP chính thức trả về từ finalizeRun (nguồn chân lý duy nhất). */
   officialXp: number;
   xpDiffReason: XpDifferenceReason;
   hitXpCap: boolean;
@@ -200,7 +172,6 @@ export interface DungeonSummaryData {
   engineResult: RunResult;
 }
 
-// ───────────────────────────── Hàm trợ giúp thuần ─────────────────────────────
 export function createEmptyVerifiedReps(): VerifiedRepCounts {
   return {
     squat: 0,
@@ -211,11 +182,6 @@ export function createEmptyVerifiedReps(): VerifiedRepCounts {
   };
 }
 
-/**
- * Tính chỉ số nhân vật theo AGENT_SPEC §3.2:
- * STR <- squat + high_knees, AGI <- side_bend, VIT <- neck_tilt, WIS <- overhead_reach
- * Công thức: floor(sqrt(verified reps))
- */
 export function computeCharacterStats(reps: VerifiedRepCounts): CharacterStats {
   return {
     str: Math.floor(Math.sqrt(Math.max(0, reps.squat + reps.high_knees))),
@@ -225,10 +191,6 @@ export function computeCharacterStats(reps: VerifiedRepCounts): CharacterStats {
   };
 }
 
-/**
- * Danh sách kỹ năng theo level.
- * Rõ ràng trạng thái: chỉ "free_swap" hoạt động thật ở F5a, 4 kỹ năng còn lại là "Sắp có".
- */
 export function getSkillsForLevel(level: number): SkillStatus[] {
   return [
     {
@@ -264,7 +226,6 @@ export function getSkillsForLevel(level: number): SkillStatus[] {
   ];
 }
 
-/** Lấy seed mới cho Dungeon Run (tôn trọng DUNGEON_CONFIG.fixedSeed để test). */
 export function createDungeonSeed(): { seed: number; isFixed: boolean } {
   if (DUNGEON_CONFIG.fixedSeed !== null) {
     return { seed: DUNGEON_CONFIG.fixedSeed >>> 0, isFixed: true };
@@ -313,9 +274,7 @@ const ALL_SIDE_OBJECTIVES: readonly { id: SideObjectiveId; target: number }[] = 
   { id: 'boss_crit', target: 1 },
 ] as const;
 
-/** Chọn đúng 2 mục tiêu phụ ngẫu nhiên không trùng nhau theo seed. */
 export function pickSideObjectives(seed: number): SideObjectiveProgress[] {
-  // Dùng hạt giống lệch bit để không phụ thuộc chiều dài chuỗi quái
   const rng = createEngineRng((seed ^ 0x9e3779b9) >>> 0);
   const pool = [...ALL_SIDE_OBJECTIVES];
   const picked: SideObjectiveProgress[] = [];
@@ -335,14 +294,17 @@ export function pickSideObjectives(seed: number): SideObjectiveProgress[] {
 }
 
 /**
- * Tạo chuỗi 3–5 quái theo seed (hoặc 3 quái × 2 rep khi isSampleRun = true).
- * Đảm bảo tuyệt đối không có 2 quái liên tiếp cùng một động tác; quái cuối luôn là Boss.
+ * Tạo chuỗi 3–5 quái theo seed và chế độ Đứng / Ngồi:
+ * - Chế độ Ngồi chỉ chọn từ 3 động tác: overhead_reach, side_bend, neck_tilt.
+ * - Vẫn bảo đảm đủ 3–5 nhiệm vụ và tuyệt đối không lặp liên tiếp cùng một động tác; quái cuối là Boss.
  */
 export function generateEncounters(
   seed: number,
-  isSampleRun = false
+  isSampleRun = false,
+  postureMode: PostureMode = 'standing'
 ): MonsterEncounter[] {
   const rng = createEngineRng(seed >>> 0);
+  const allowedPool = getAllowedExercises(postureMode);
   const span = DUNGEON_CONFIG.maxEncounters - DUNGEON_CONFIG.minEncounters + 1;
   const count = isSampleRun
     ? DUNGEON_CONFIG.sampleEncounterCount
@@ -352,11 +314,10 @@ export function generateEncounters(
   let prevExercise: ExerciseId | null = null;
 
   for (let i = 0; i < count; i++) {
-    // Khai báo tường minh kiểu ExerciseId để tránh lỗi TS7022 (vòng lặp suy luận kiểu với prevExercise)
     const candidates: readonly ExerciseId[] =
       prevExercise === null
-        ? ALL_EXERCISE_IDS
-        : ALL_EXERCISE_IDS.filter((id) => id !== prevExercise);
+        ? allowedPool
+        : allowedPool.filter((id) => id !== prevExercise);
 
     const chosen: ExerciseId = candidates[Math.floor(rng() * candidates.length)];
     prevExercise = chosen;
@@ -368,22 +329,24 @@ export function generateEncounters(
   return encounters;
 }
 
-/** Khởi tạo trạng thái ban đầu cho một lượt Dungeon Run. */
 export function createDungeonRunState(options: {
   seed: number;
   isFixedSeed?: boolean;
   isSampleRun?: boolean;
+  postureMode?: PostureMode;
   startingTotalXp?: number;
 }): DungeonRunState {
   const seed = options.seed >>> 0;
   const isSampleRun = Boolean(options.isSampleRun);
+  const postureMode: PostureMode = options.postureMode ?? 'standing';
 
   return {
     seed,
     isFixedSeed: Boolean(options.isFixedSeed),
     isSampleRun,
+    postureMode,
     phase: 'fighting',
-    encounters: generateEncounters(seed, isSampleRun),
+    encounters: generateEncounters(seed, isSampleRun, postureMode),
     currentIndex: 0,
     startedAtMs: null,
     transitionUntilMs: null,
@@ -404,11 +367,6 @@ export function createDungeonRunState(options: {
   };
 }
 
-/**
- * Tính sát thương cho một rep hợp lệ:
- * - Sát thương = cơ bản × chất lượng × hệ số combo × (chí mạng 1,5 nếu quality >= 0,9).
- * - Combo CHỈ ảnh hưởng sát thương, KHÔNG ảnh hưởng XP.
- */
 export function calculateRepDamage(
   quality: number,
   nextCombo: number
@@ -430,7 +388,6 @@ export function calculateRepDamage(
   return { damage, isCrit, comboMultiplier };
 }
 
-/** Cập nhật tiến độ 2 mục tiêu phụ sau mỗi sự kiện chiến đấu. */
 function evaluateSideObjectives(state: DungeonRunState): SideObjectiveProgress[] {
   const boss = state.encounters[state.encounters.length - 1];
   const bossDefeated = Boolean(boss && boss.defeated);
@@ -465,12 +422,6 @@ function evaluateSideObjectives(state: DungeonRunState): SideObjectiveProgress[]
   });
 }
 
-/**
- * Xử lý kết quả 1 rep từ RepCounter trong lượt Dungeon Run:
- * - Nếu rep bị từ chối (!counted): tăng rejectedRepCount, reset combo về 0.
- * - Nếu rep hợp lệ (counted): tăng combo, trừ HP quái, cập nhật XP tạm (kẹp cap),
- *   cập nhật mục tiêu phụ, chuyển sang trạng thái chờ ~1s nếu quái vừa bị hạ.
- */
 export function applyRepToDungeon(
   state: DungeonRunState,
   rep: RepResult,
@@ -480,7 +431,6 @@ export function applyRepToDungeon(
 
   const startedAtMs = state.startedAtMs ?? Math.min(rep.startT, atMs);
 
-  // Rep không hợp lệ: không gây sát thương, reset combo về 0
   if (!rep.counted) {
     return {
       ...state,
@@ -500,7 +450,6 @@ export function applyRepToDungeon(
     nextCombo
   );
 
-  // XP tạm tính theo đúng rep.xp của engine (KHÔNG nhân combo) và kẹp theo CONFIG.xpCap
   const remainingCap = Math.max(
     0,
     ENGINE_XP_CAP - (state.startingTotalXp + state.tentativeXpEarned)
@@ -569,7 +518,6 @@ export function applyRepToDungeon(
   };
 }
 
-/** Ghi nhận 1 lần hủy rep giữa chừng (mất tư thế) -> reset combo về 0. */
 export function applyCancelledRepToDungeon(
   state: DungeonRunState
 ): DungeonRunState {
@@ -581,7 +529,6 @@ export function applyCancelledRepToDungeon(
   };
 }
 
-/** Chuyển sang quái kế tiếp sau khi hết thời gian chờ ~1s. */
 export function advanceMonsterTransition(
   state: DungeonRunState,
   nowMs: number
@@ -613,7 +560,7 @@ export function advanceMonsterTransition(
 
 /**
  * Kỹ năng hoạt động thật: "Đổi quái miễn phí" (1 lần mỗi lượt).
- * Thay quái hiện tại bằng 1 quái có động tác KHÁC động tác hiện tại (và ưu tiên khác quái liền trước/sau).
+ * Tôn trọng chế độ Ngồi / Đứng: chỉ đổi sang động tác hợp lệ và KHÁC động tác hiện tại.
  */
 export function swapCurrentMonster(state: DungeonRunState): DungeonRunState {
   if (state.phase !== 'fighting' || state.swapsRemaining <= 0) {
@@ -623,6 +570,7 @@ export function swapCurrentMonster(state: DungeonRunState): DungeonRunState {
   const current = state.encounters[state.currentIndex];
   if (!current || current.defeated) return state;
 
+  const allowedPool = getAllowedExercises(state.postureMode);
   const prevEx =
     state.currentIndex > 0 ? state.encounters[state.currentIndex - 1].exercise : null;
   const nextEx =
@@ -630,13 +578,13 @@ export function swapCurrentMonster(state: DungeonRunState): DungeonRunState {
       ? state.encounters[state.currentIndex + 1].exercise
       : null;
 
-  // Luôn khác động tác hiện tại; ưu tiên khác luôn quái trước & quái sau để giữ luật không lặp liên tiếp
-  let candidates: ExerciseId[] = ALL_EXERCISE_IDS.filter(
+  let candidates: ExerciseId[] = allowedPool.filter(
     (id) => id !== current.exercise && id !== prevEx && id !== nextEx
   );
   if (candidates.length === 0) {
-    candidates = ALL_EXERCISE_IDS.filter((id) => id !== current.exercise);
+    candidates = allowedPool.filter((id) => id !== current.exercise);
   }
+  if (candidates.length === 0) return state;
 
   const rng = createEngineRng(
     (state.seed ^ ((state.currentIndex + 1) * 2654435761)) >>> 0
@@ -666,10 +614,6 @@ export function swapCurrentMonster(state: DungeonRunState): DungeonRunState {
   };
 }
 
-/**
- * Tổng kết lượt Dungeon Run bằng finalizeRun() của pose-engine.ts.
- * XP chính thức luôn lấy từ finalizeRun, kèm phân tích nguyên nhân nếu khác XP tạm trên UI.
- */
 export function buildDungeonSummary(options: {
   state: DungeonRunState;
   endedAtMs: number;
@@ -691,7 +635,6 @@ export function buildDungeonSummary(options: {
 
   const combinedGuard = combineGuardVerdict(guardResult, livenessFailed);
 
-  // Tính thời lượng lượt hợp lý để finalizeRun kiểm tra TOO_MANY_REPS chính xác
   const rawDurationMs =
     state.startedAtMs !== null ? Math.max(0, endedAtMs - state.startedAtMs) : 0;
   const minSumRepMs = state.countedReps.reduce((acc, r) => acc + r.durationMs, 0);
@@ -704,7 +647,6 @@ export function buildDungeonSummary(options: {
     totalXpBefore
   );
 
-  // Gộp toàn bộ mã lý do duy nhất từ SessionGuard + Liveness + finalizeRun
   const reasonSet = new Set<string>([
     ...combinedGuard.flags,
     ...engineResult.reasons,
@@ -716,7 +658,6 @@ export function buildDungeonSummary(options: {
     countedRepsByExercise[r.exercise] += 1;
   }
 
-  // Chỉ cộng XP và chỉ số khi finalizeRun trả về verdict === 'verified'
   const officialXp = engineResult.xp;
   const totalXpAfter =
     engineResult.verdict === 'verified'
@@ -730,7 +671,6 @@ export function buildDungeonSummary(options: {
     }
   }
 
-  // Giải thích rõ lý do nếu XP chính thức khác XP tạm cộng dồn trên UI
   let xpDiffReason: XpDifferenceReason = 'none';
   if (officialXp !== state.tentativeXpEarned) {
     if (engineResult.verdict === 'rejected') {
@@ -779,7 +719,6 @@ export function buildDungeonSummary(options: {
   };
 }
 
-/** Tiện ích đọc baseXp/holdMs trực tiếp từ adapter (không import pose-engine ở UI). */
 export function getExerciseMeta(id: ExerciseId) {
   const def = getExerciseDef(id);
   return {

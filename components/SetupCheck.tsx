@@ -1,5 +1,6 @@
 'use client';
 
+import type { PostureMode } from '@/lib/game/engineAdapter';
 import type { FrameStabilitySnapshot } from '@/lib/pose/frameCheck';
 import { i18n } from '@/lib/i18n';
 
@@ -8,15 +9,34 @@ export interface SetupCheckProps {
   snapshot: FrameStabilitySnapshot;
   /** Chỉ hiển thị kết quả thật khi cả camera và mô hình AI đều đã sẵn sàng. */
   aiReady: boolean;
+  /** Chế độ Đứng hoặc Ngồi để hiển thị đúng thông báo và mẹo đặt webcam. */
+  postureMode?: PostureMode;
+  /** True nếu người dùng đang chủ động tắt camera. */
+  cameraOff?: boolean;
 }
 
 /**
  * Thẻ trạng thái Lớp 0 (Kiểm tra khung hình):
- * - Hiện "Sẵn sàng" màu xanh khi khung hình đạt liên tục >= 400ms.
- * - Hiện lý do tiếng Việt cụ thể khi chưa đạt (thiếu khớp, sát mép/ngoài khung, quá xa, quá gần).
+ * - Chế độ Đứng: báo theo khung toàn thân/thân trên.
+ * - Chế độ Ngồi: báo theo thân trên kèm hướng dẫn đặt webcam ngang tầm ngực–vai, cách 60–80cm.
  */
-export function SetupCheck({ snapshot, aiReady }: SetupCheckProps) {
+export function SetupCheck({
+  snapshot,
+  aiReady,
+  postureMode = 'standing',
+  cameraOff = false,
+}: SetupCheckProps) {
   const { frameCheck, status } = i18n.play.practice;
+  const isSeated = postureMode === 'seated';
+
+  if (cameraOff) {
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-300">
+        <span className="font-semibold text-white">{frameCheck.title}:</span>{' '}
+        {status.cameraOff}
+      </div>
+    );
+  }
 
   if (!aiReady) {
     return (
@@ -29,9 +49,13 @@ export function SetupCheck({ snapshot, aiReady }: SetupCheckProps) {
 
   const isReady = snapshot.stableOk;
   const isStabilizing = snapshot.transitioningTo !== null;
-  const reasonText = snapshot.stableReason
-    ? frameCheck.reasons[snapshot.stableReason]
+  const reasonMap = isSeated ? frameCheck.seatedReasons : frameCheck.reasons;
+  const readyText = isSeated
+    ? frameCheck.readyMessageSeated
     : frameCheck.readyMessage;
+  const reasonText = snapshot.stableReason
+    ? reasonMap[snapshot.stableReason]
+    : readyText;
 
   return (
     <div
@@ -42,7 +66,7 @@ export function SetupCheck({ snapshot, aiReady }: SetupCheckProps) {
       }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span
             className={`h-2.5 w-2.5 rounded-full ${
               isReady ? 'bg-emerald-400' : 'bg-amber-400'
@@ -51,6 +75,11 @@ export function SetupCheck({ snapshot, aiReady }: SetupCheckProps) {
           <span className="text-xs font-semibold uppercase tracking-wide opacity-80">
             {frameCheck.title}
           </span>
+          {isSeated && (
+            <span className="rounded-full border border-sky-400/40 bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-200">
+              🪑 {i18n.posture.seatedBadge}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -72,8 +101,14 @@ export function SetupCheck({ snapshot, aiReady }: SetupCheckProps) {
       </div>
 
       <p className="mt-1.5 text-sm leading-snug">
-        {isReady ? frameCheck.readyMessage : reasonText}
+        {isReady ? readyText : reasonText}
       </p>
+
+      {isSeated && !isReady && (
+        <p className="mt-1.5 text-xs leading-relaxed text-sky-200/90">
+          💡 {i18n.posture.seatedSetupGuide}
+        </p>
+      )}
     </div>
   );
 }

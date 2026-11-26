@@ -13,10 +13,12 @@ import {
   type Frame,
   type RepResult,
 } from '@/lib/pose-engine';
+import type { PostureMode } from '@/lib/game/engineAdapter';
 import { LandmarkOneEuroFilter } from '@/lib/pose/landmarkFilter';
 import {
   FrameStabilityGate,
   evaluateFrameCheck,
+  getExerciseDefForPosture,
   type FrameCheckReason,
   type FrameStabilitySnapshot,
 } from '@/lib/pose/frameCheck';
@@ -29,7 +31,6 @@ import { useGameStore } from '@/lib/game/store';
 import type { ProgressTone } from '@/components/ProgressRing';
 import { i18n } from '@/lib/i18n';
 
-// Chỉ đồng bộ React state tối đa mỗi 100ms khi không có sự kiện đổi rep / đổi thử thách / đổi gate
 const UI_SYNC_INTERVAL_MS = 100;
 const POST_REP_FEEDBACK_MS = 2600;
 const CANCELLED_BANNER_MS = 3000;
@@ -145,13 +146,9 @@ export interface RepCounterUiState {
   currentHoldMs: number;
   targetHoldMs: number;
   awaitingRest: boolean;
-  /** Trạng thái khung hình Lớp 0 đã chống nhấp nháy. */
   frameCheck: FrameStabilitySnapshot;
-  /** Lý do hủy rep nếu mất tư thế giữa chừng. */
   cancelledReason: FrameCheckReason | null;
-  /** Trạng thái Thử thách sống Lớp 3b của lượt tập hiện tại. */
   liveness: LivenessRunSnapshot;
-  /** Banner tạm thời báo vừa đạt/trượt thử thách sống. */
   recentChallengeOutcome: 'passed' | 'failed' | null;
   lastRep: LastRepSnapshot | null;
   hintText: string;
@@ -223,13 +220,10 @@ function createInitialFrameSnapshot(): FrameStabilitySnapshot {
     transitionProgress: 0,
     shoulderWidthRatio: null,
     torsoHeightRatio: null,
+    shoulderEarRatio: null,
   };
 }
 
-/**
- * Trạng thái cố định cho lần render đầu (SSR và client khớp nhau 100%).
- * Seed thật sẽ được sinh trong useEffect phía trình duyệt.
- */
 function createPlaceholderLivenessSnapshot(): LivenessRunSnapshot {
   return {
     seed: 0,
@@ -391,13 +385,16 @@ function snapshotUiState(
 }
 
 /**
- * Hook tổng hợp cho F3 + F4:
- * - Không gọi newSeed() hay đọc/ghi ref trong lúc render (tránh lỗi SSR/hydration của Next.js).
- * - Khởi tạo seed, LivenessRunController và SessionGuard trong useEffect phía client.
- * - Lưu kết quả đạt/thất bại vào Zustand (RAM), không gây re-render React mỗi frame.
+ * Hook Chế độ luyện tập (F3 + F4 + hỗ trợ chế độ Ngồi F8):
+ * - Dùng `getExerciseDefForPosture` và `evaluateFrameCheck(..., postureMode)`
+ *   để chế độ Ngồi chỉ yêu cầu khớp thân trên mà không sửa `pose-engine.ts`.
  */
-export function useRepCounter(exerciseId: ExerciseId) {
+export function useRepCounter(
+  exerciseId: ExerciseId,
+  postureMode: PostureMode = 'standing'
+) {
   const activeExerciseRef = useRef<ExerciseId>(exerciseId);
+  const postureModeRef = useRef<PostureMode>(postureMode);
   const counterRef = useRef<RepCounter | null>(null);
   const filterRef = useRef<LandmarkOneEuroFilter | null>(null);
   const stabilityGateRef = useRef<FrameStabilityGate | null>(null);
@@ -405,7 +402,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
   const guardRef = useRef<SessionGuard | null>(null);
   const runtimeRef = useRef<RuntimeState | null>(null);
 
-  // State khởi tạo thuần túy, không gọi hàm ngẫu nhiên khi SSR
   const [uiState, setUiState] = useState<RepCounterUiState>(() =>
     snapshotUiState(
       exerciseId,
@@ -413,13 +409,16 @@ export function useRepCounter(exerciseId: ExerciseId) {
     )
   );
 
-  // 1. Khởi tạo lượt tập thử mặc định hoàn toàn phía client sau khi mount
+  // Khởi tạo hoàn toàn phía client sau khi mount
   useEffect(() => {
     const currentId = activeExerciseRef.current;
+    const currentMode = postureModeRef.current;
     const { seed, isFixed } = createRunSeed();
     const controller = new LivenessRunController(seed, isFixed);
 
-    counterRef.current = new RepCounter(EXERCISES[currentId]);
+    counterRef.current = new RepCounter(
+      getExerciseDefForPosture(currentId, currentMode)
+    );
     filterRef.current = new LandmarkOneEuroFilter();
     stabilityGateRef.current = new FrameStabilityGate();
     livenessRef.current = controller;
@@ -437,14 +436,18 @@ export function useRepCounter(exerciseId: ExerciseId) {
     setUiState(snapshotUiState(currentId, initialRt));
   }, []);
 
-  // 2. Khi đổi động tác: tạo RepCounter mới và reset bộ kiểm tra khung hình cho danh sách khớp mới
+  // Khi đổi động tác hoặc đổi chế độ Đứng/Ngồi -> tạo lại RepCounter & reset bộ kiểm tra khung hình
   useEffect(() => {
     const prevId = activeExerciseRef.current;
+    const prevMode = postureModeRef.current;
     activeExerciseRef.current = exerciseId;
-    if (prevId === exerciseId) return;
+    postureModeRef.current = postureMode;
+    if (prevId === exerciseId && prevMode === postureMode) return;
 
     const rt = runtimeRef.current;
-    counterRef.current = new RepCounter(EXERCISES[exerciseId]);
+    counterRef.current = new RepCounter(
+      getExerciseDefForPosture(exerciseId, postureMode)
+    );
     filterRef.current?.reset();
     stabilityGateRef.current?.reset();
 
@@ -458,9 +461,8 @@ export function useRepCounter(exerciseId: ExerciseId) {
     );
     runtimeRef.current = nextRt;
     setUiState(snapshotUiState(exerciseId, nextRt));
-  }, [exerciseId]);
+  }, [exerciseId, postureMode]);
 
-  // Đặt lại bộ đếm rep cho động tác hiện tại (giữ nguyên lượt tập thử đang chạy)
   const reset = useCallback(() => {
     const currentId = activeExerciseRef.current;
     const rt = runtimeRef.current;
@@ -483,15 +485,17 @@ export function useRepCounter(exerciseId: ExerciseId) {
     setUiState(snapshotUiState(currentId, rt));
   }, []);
 
-  // Bắt đầu một Lượt tập thử (Run) mới với seed mới
   const startNewRun = useCallback(() => {
     const currentId = activeExerciseRef.current;
+    const currentMode = postureModeRef.current;
     const { seed, isFixed } = createRunSeed();
     const nextController = new LivenessRunController(seed, isFixed);
 
     livenessRef.current = nextController;
     guardRef.current = new SessionGuard(seed, 0);
-    counterRef.current = new RepCounter(EXERCISES[currentId]);
+    counterRef.current = new RepCounter(
+      getExerciseDefForPosture(currentId, currentMode)
+    );
     filterRef.current = new LandmarkOneEuroFilter();
     stabilityGateRef.current = new FrameStabilityGate();
 
@@ -507,7 +511,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
     setUiState(snapshotUiState(currentId, nextRt));
   }, []);
 
-  // Kết thúc lượt tập thử hiện tại (giữ thống kê tạm trong RAM để xem kết quả)
   const stopRun = useCallback(() => {
     const currentId = activeExerciseRef.current;
     const rt = runtimeRef.current;
@@ -538,6 +541,11 @@ export function useRepCounter(exerciseId: ExerciseId) {
 
     const def = counter.def;
     const isHold = def.holdMs > 0;
+    const currentMode = postureModeRef.current;
+    const reasonMap =
+      currentMode === 'seated'
+        ? i18n.play.practice.frameCheck.seatedReasons
+        : i18n.play.practice.frameCheck.reasons;
 
     const prevStableOk = rt.frameCheck.stableOk;
     const prevStableReason = rt.frameCheck.stableReason;
@@ -545,15 +553,14 @@ export function useRepCounter(exerciseId: ExerciseId) {
     const prevChallengeId = rt.liveness.activeChallenge?.id ?? null;
     let forceSync = false;
 
-    // 1. Làm mượt landmarks bằng One Euro Filter ở tầng F3
     if (frame.lm.length >= 33) {
       filter.applyInPlace(frame.lm, frame.t);
     } else {
       filter.reset();
     }
 
-    // 2. Lớp 0: Kiểm tra khung hình + bộ chống nhấp nháy 400ms
-    const rawCheck = evaluateFrameCheck(frame, def.id);
+    // Kiểm tra khung hình theo đúng chế độ Đứng / Ngồi
+    const rawCheck = evaluateFrameCheck(frame, def.id, currentMode);
     const frameSnap = stabilityGate.update(rawCheck, frame.t);
     rt.frameCheck = frameSnap;
 
@@ -580,7 +587,7 @@ export function useRepCounter(exerciseId: ExerciseId) {
       return;
     }
 
-    // 3. Lớp 3b: Chạy SessionGuard + bộ điều phối Thử thách sống theo seed
+    // Thử thách sống vẫn chạy bình thường ở chế độ Ngồi
     guard.onFrame(frame);
     const livenessStep = livenessCtrl.onFrame(frame, rt.validRepsInRun);
     rt.liveness = livenessStep.snapshot;
@@ -615,7 +622,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
       forceSync = true;
     }
 
-    // Đang trong thử thách sống -> TẠM DỪNG đếm rep hoàn toàn
     if (rt.liveness.activeChallenge !== null) {
       rt.hintText = i18n.play.practice.status.challengePaused;
       rt.hintTone = 'warning';
@@ -627,7 +633,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
       return;
     }
 
-    // 4. Chỉ cho phép đếm rep khi khung hình đạt trạng thái "Sẵn sàng"
     if (!frameSnap.stableOk) {
       if (rt.inRep && !rt.awaitingRest) {
         rt.cancelledReason = frameSnap.stableReason ?? 'NO_POSE';
@@ -648,7 +653,7 @@ export function useRepCounter(exerciseId: ExerciseId) {
       rt.currentHoldMs = 0;
 
       const reasonKey: FrameCheckReason = frameSnap.stableReason ?? 'NO_POSE';
-      rt.hintText = i18n.play.practice.frameCheck.reasons[reasonKey];
+      rt.hintText = reasonMap[reasonKey];
       rt.hintTone = rt.cancelledReason ? 'error' : 'warning';
 
       if (forceSync || frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
@@ -658,7 +663,6 @@ export function useRepCounter(exerciseId: ExerciseId) {
       return;
     }
 
-    // 5. Khung hình đã Sẵn sàng -> đẩy frame vào RepCounter của pose-engine.ts
     const pushRes = counter.push(frame);
     const { gate, progress, rep } = pushRes;
     rt.metricValue = pushRes.metric ?? null;
