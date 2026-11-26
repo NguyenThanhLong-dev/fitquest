@@ -1,8 +1,15 @@
-import type { ChallengeId, ExerciseId, GateReason, Verdict } from '@/lib/pose-engine';
+import type {
+  ChallengeId,
+  ExerciseId,
+  GateReason,
+  Rarity,
+  Verdict,
+} from '@/lib/pose-engine';
+import type { CosmeticItemId, CosmeticSlot } from '@/lib/game/cosmetics';
 
 /**
- * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a).
- * Giữ nguyên toàn bộ khóa cũ để chế độ luyện tập và các component F1–F4 không bị ảnh hưởng.
+ * Toàn bộ chuỗi giao diện tiếng Việt cho FitQuest (F1 + F2 + F3 + F4 + F5a + F5b).
+ * Giữ nguyên toàn bộ khóa cũ và bổ sung chuỗi trình bày + phần thưởng cosmetic F5b.
  */
 export const i18n = {
   // ── F1: Metadata toàn cục ──
@@ -12,44 +19,43 @@ export const i18n = {
       'RPG vận động 5–10 phút tại bàn học cho sinh viên IT, kiểm chứng động tác bằng camera ngay trên máy.',
   },
 
-  // ── F1 + F5a: Trang chủ (app/page.tsx) ──
+  // ── F1 + F5a + F5b: Trang chủ (app/page.tsx) ──
   home: {
     title: 'FitQuest',
+    dungeonTag: 'Hầm Ngục Vận Động · Local AI',
+    storyLine: 'Hang động Cứng Cổ đang chờ bạn…',
     description:
-      'Game RPG giúp sinh viên IT tập các bài vận động ngắn 5–10 phút ngay tại bàn học với camera kiểm chứng trực tiếp trên máy bạn.',
-    nameLabel: 'Tên hiển thị (không bắt buộc)',
+      'Đánh bại quái vật bằng chính chuyển động của bạn trong 5–10 phút ngay tại bàn học, kiểm chứng bằng camera trên máy.',
+    nameLabel: 'Tên hiệp sĩ (không bắt buộc)',
     namePlaceholder: 'Nhập tên của bạn...',
-    startButton: 'Vào Hầm Ngục (Dungeon Run)',
+    startButton: 'Bắt đầu Dungeon Run',
     practiceButton: 'Chế độ luyện tập tự do',
     privacyNote: 'Video không bao giờ rời khỏi máy bạn.',
     reloadLossNotice: 'Tải lại trang sẽ mất tiến độ',
     levelPrefix: 'Cấp',
     xpUnit: 'XP',
+    cosmeticCountPrefix: 'Trang bị đã mở:',
   },
 
   // ── F1 + F2 + F3 + F4: Trang chơi, camera, AI, luyện tập & thử thách sống ──
   play: {
-    // Khóa giữ nguyên từ F1
     placeholder: 'Camera sắp có',
     backHome: 'Quay lại trang chủ',
     playerPrefix: 'Người chơi:',
     defaultPlayer: 'Ẩn danh',
     xpPrefix: 'XP:',
 
-    // Khóa dùng chung trên /play (F2)
     title: 'FitQuest',
     privacyNotice:
       'Video xử lý hoàn toàn trên máy bạn — không bao giờ gửi qua mạng.',
     retryButton: 'Thử lại',
     errorDetailPrefix: 'Chi tiết lỗi gốc:',
 
-    // Chuyển chế độ trên /play (F5a giữ nguyên chế độ luyện tập F4)
     modeTabs: {
       dungeon: 'Dungeon Run',
       practice: 'Chế độ luyện tập',
     },
 
-    // Thông báo lỗi camera (components/CameraView.tsx)
     camera: {
       starting: 'Đang mở camera...',
       unsupported:
@@ -64,7 +70,6 @@ export const i18n = {
         'Không thể khởi động camera. Hãy kiểm tra thiết bị và quyền truy cập rồi thử lại.',
     },
 
-    // Thông báo tải và khởi tạo mô hình AI (lib/pose/usePoseLandmarker.ts)
     model: {
       loading: 'Đang tải mô hình AI nhận diện tư thế từ máy (MediaPipe Lite)...',
       ready: 'AI sẵn sàng',
@@ -76,14 +81,12 @@ export const i18n = {
         'Không thể khởi tạo mô hình AI trên cả GPU lẫn CPU. Hãy kiểm tra trình duyệt có hỗ trợ WebAssembly/WebGL không rồi thử lại.',
     },
 
-    // Nhãn HUD góc camera (F2)
     hud: {
       poseDetected: 'Đang theo dõi khung xương',
       noPose: 'Chưa thấy người trong khung hình',
       fpsUnit: 'FPS',
     },
 
-    // ── F3 + F4: Chế độ luyện tập 5 động tác ──
     practice: {
       modeBadge: 'Chế độ luyện tập',
       chooseExerciseLabel: 'Chọn động tác luyện tập',
@@ -303,17 +306,24 @@ export const i18n = {
     },
   },
 
-  // ── F5a: Dungeon Run (Đánh quái bằng cơ thể) ──
+  // ── F5a + F5b: Dungeon Run & Lớp trình bày + Cosmetic ──
   dungeon: {
     modeBadge: 'Hầm Ngục · Dungeon Run',
     stagePrefix: 'Phòng',
     bossTag: 'BOSS CUỐI',
     normalTag: 'QUÁI THƯỜNG',
     hpLabel: 'HP',
+    lastHitBadge: 'Đòn cuối!',
     chargeBarLabel: 'Nạp lực tung đòn',
     repProgressLabel: 'Nhịp tung đòn',
     comboLabel: 'COMBO',
     comboDamageHint: 'Tăng sát thương (không tăng XP)',
+    comboNextMilestone: 'Mốc cổ vũ kế:',
+    comboMaxReached: 'Đỉnh phong độ!',
+    comboCheers: {
+      5: 'Combo x5! Đang vào phom cực mượt!',
+      10: 'Combo x10! Chiến thần bàn phím đây rồi!',
+    } as Record<5 | 10, string>,
     critBanner: 'CHÍ MẠNG!',
     damageUnit: 'ST',
     xpFloatingPrefix: '+',
@@ -321,6 +331,88 @@ export const i18n = {
     defeatedBanner: 'ĐÃ HẠ GỤC! Chuẩn bị đón quái kế tiếp...',
     pausedOverlayTitle: 'Đang tạm dừng',
     pausedOverlayDesc: 'Nhấn "Tiếp tục" để quay lại chiến đấu.',
+
+    sound: {
+      onLabel: '🔊 Tiếng: Bật',
+      offLabel: '🔇 Tiếng: Tắt',
+    },
+
+    fx: {
+      reducedBadge: 'Giảm hiệu ứng',
+      lowFpsTag: 'FPS < 20',
+      reducedMotionTag: 'Reduced Motion',
+    },
+
+    boss: {
+      introBadge: 'CẢNH BÁO BOSS CUỐI',
+      introSubtitle: 'Trùm hầm ngục xuất hiện — tập chắc nhịp để hạ gục!',
+      finisherBadge: 'ĐÒN KẾT LIỄU BOSS!',
+      finisherSubtitle: 'Hầm ngục rung chuyển…',
+    },
+
+    breather: {
+      badge: 'Nghỉ lấy hơi',
+      title: 'Hạ gục quái thành công!',
+      nextMonsterPrefix: 'Sắp gặp:',
+      countdownSuffix: 'giây',
+      skipButton: 'Sẵn sàng ngay',
+      tips: [
+        'Uống một ngụm nước nhỏ cho tỉnh táo nhé.',
+        'Thả lỏng hai vai và chỉnh lại tư thế đứng/ngồi thật thoải mái.',
+        'Hít sâu bằng mũi, thở chậm bằng miệng để lấy lại nhịp thở.',
+        'Lắc nhẹ cổ tay và rời mắt khỏi màn hình vài giây cho đỡ mỏi.',
+      ],
+    },
+
+    levelUp: {
+      badge: 'LÊN CẤP!',
+      levelPrefix: 'Đạt Cấp',
+      unlockedSkillsPrefix: 'Kỹ năng vừa mở:',
+      noNewSkills: 'Tiếp tục chiến đấu để mở khóa kỹ năng mới!',
+    },
+
+    loot: {
+      sectionTitle: 'Rương chiến lợi phẩm',
+      chestLabelVerified: 'Rương Hầm Ngục (Theo seed lượt này)',
+      chestLabelReview: 'Rương Thường (Lượt cần kiểm tra)',
+      openButton: 'Mở rương ngay',
+      openedBadge: 'Đã cất vào kho nhân vật (RAM)',
+      commonOnlyNote:
+        'Lượt ở trạng thái Cần kiểm tra (review) nên chỉ nhận rương Thường.',
+      rejectedNoChest:
+        'Lượt không hợp lệ (rejected) — không nhận được rương chiến lợi phẩm.',
+      inventoryTitle: 'Trang bị Cosmetic (RAM)',
+      inventoryEmpty:
+        'Chưa có vật phẩm. Hoàn thành Dungeon Run để mở rương!',
+      equipButton: 'Trang bị',
+      unequipButton: 'Tháo',
+      equippedBadge: 'Đang dùng',
+      rarities: {
+        common: 'Thường',
+        rare: 'Hiếm',
+        epic: 'Epic',
+        legendary: 'Huyền thoại',
+      } satisfies Record<Rarity, string>,
+      slots: {
+        skin: 'Skin',
+        frame: 'Khung avatar',
+        title: 'Danh hiệu',
+      } satisfies Record<CosmeticSlot, string>,
+      items: {
+        skin_hoodie_code: 'Áo Hoodie Đêm Code',
+        frame_terminal: 'Khung Cửa Sổ Terminal',
+        title_night_coder: 'Cú Đêm Cần Mẫn',
+        skin_iron_dev: 'Giáp Sắt Lập Trình',
+        frame_neon_cyan: 'Khung Neon Xanh Lơ',
+        title_bug_slayer: 'Thợ Săn Bug',
+        skin_shadow_mage: 'Áo Choàng Pháp Sư Bóng Đêm',
+        frame_void_purple: 'Khung Hư Không Tím',
+        title_ergonomic_knight: 'Hiệp Sĩ Công Thái Học',
+        skin_dragon_lord: 'Chiến Giáp Long Vương',
+        frame_solar_gold: 'Khung Hoàng Kim Hầm Ngục',
+        title_spine_guardian: 'Thần Hộ Mệnh Cột Sống',
+      } satisfies Record<CosmeticItemId, string>,
+    },
 
     controls: {
       pause: 'Tạm dừng',
@@ -475,7 +567,7 @@ export const i18n = {
     },
 
     debug: {
-      title: 'Debug Dungeon (F5a)',
+      title: 'Debug Dungeon (F5a/F5b)',
       sampleRunButton: 'Lượt mẫu (3 quái × 2 rep)',
       sampleRunTag: 'Đang chạy Lượt mẫu',
       normalRunTag: 'Lượt chuẩn (3–5 quái)',

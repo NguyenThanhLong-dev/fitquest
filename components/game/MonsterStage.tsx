@@ -1,13 +1,21 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { ExerciseId, XpProgressInfo } from '@/lib/game/engineAdapter';
-import type { DamageEvent, DungeonRunState, MonsterEncounter } from '@/lib/game/dungeon';
+import type {
+  DamageEvent,
+  DungeonRunState,
+  MonsterEncounter,
+} from '@/lib/game/dungeon';
+import { isOneHitAway, type ComboMilestone } from '@/lib/game/cosmetics';
 import type { ProgressTone } from '@/components/ProgressRing';
 import { i18n } from '@/lib/i18n';
+import './dungeon-fx.css';
 
 export interface MonsterStageProps {
   dungeon: DungeonRunState;
   monster: MonsterEncounter;
+  nextMonster: MonsterEncounter | null;
   xpInfo: XpProgressInfo;
   activeHit: DamageEvent | null;
   hitSeq: number;
@@ -20,12 +28,19 @@ export interface MonsterStageProps {
   frameReady: boolean;
   hintText: string;
   hintTone: ProgressTone;
+  /** True khi hệ điều hành bật prefers-reduced-motion hoặc FPS < 20. */
+  reducedFx: boolean;
+  breatherRemainingMs: number;
+  breatherTip: string | null;
+  bossIntroActive: boolean;
+  bossFinisherActive: boolean;
+  comboCheer: ComboMilestone | null;
   onTogglePause: () => void;
   onSwapMonster: () => void;
+  onSkipBreather: () => void;
   onFinishRun: () => void;
 }
 
-// Tạo hình biểu tượng nội bộ bằng Emoji + nền CSS hầm ngục (không tải ảnh từ mạng)
 const MONSTER_VISUALS: Record<
   ExerciseId,
   { emoji: string; accentClass: string; ringClass: string }
@@ -66,13 +81,18 @@ const HINT_TONE_STYLES: Record<ProgressTone, string> = {
 };
 
 /**
- * Sân đấu quái Hầm Ngục — thiết kế tối màu, chữ lớn dễ đọc từ khoảng cách ~1m.
- * Hiển thị: quái hiện tại, thanh HP, thanh nạp lực / tiến độ đòn, sát thương / Chí mạng / +XP nổi,
- * Combo, thanh XP lên cấp, cảnh báo giới hạn XP và các nút Tạm dừng / Đổi quái / Kết thúc lượt.
+ * Sân đấu quái vật Hầm Ngục (F5a + lớp trình bày F5b):
+ * - Rung nhẹ khi trúng đòn, quái nhấp nháy, số sát thương bay lên, tia sáng + "CHÍ MẠNG!".
+ * - Thanh Combo rõ nét + câu cổ vũ vui ở mốc x5, x10.
+ * - Nhãn "Đòn cuối!" khi quái chỉ còn 1 đòn là gục.
+ * - Màn vào Boss, thanh HP Boss lớn, đòn kết liễu Boss làm chậm 0,5s.
+ * - Màn "Nghỉ lấy hơi" 4s giữa các quái kèm gợi ý uống nước / chỉnh tư thế.
+ * - Tự tắt rung & hiệu ứng nặng khi `reducedFx === true`.
  */
 export function MonsterStage({
   dungeon,
   monster,
+  nextMonster,
   xpInfo,
   activeHit,
   hitSeq,
@@ -85,14 +105,40 @@ export function MonsterStage({
   frameReady,
   hintText,
   hintTone,
+  reducedFx,
+  breatherRemainingMs,
+  breatherTip,
+  bossIntroActive,
+  bossFinisherActive,
+  comboCheer,
   onTogglePause,
   onSwapMonster,
+  onSkipBreather,
   onFinishRun,
 }: MonsterStageProps) {
   const texts = i18n.dungeon;
   const monsterInfo = texts.monsters[monster.exercise];
   const visual = MONSTER_VISUALS[monster.exercise];
   const isHold = targetHoldMs > 0;
+
+  // Bật rung nhẹ & nhấp nháy quái đúng theo nhịp mỗi đòn (không remount toàn thẻ)
+  const [impactState, setImpactState] = useState<'none' | 'normal' | 'crit'>(
+    'none'
+  );
+
+  useEffect(() => {
+    if (hitSeq <= 0 || !activeHit || reducedFx) {
+      setImpactState('none');
+      return;
+    }
+
+    setImpactState(activeHit.isCrit ? 'crit' : 'normal');
+    const timer = window.setTimeout(
+      () => setImpactState('none'),
+      activeHit.isCrit ? 380 : 280
+    );
+    return () => window.clearTimeout(timer);
+  }, [hitSeq, activeHit, reducedFx]);
 
   const hpPercent = Math.max(
     0,
@@ -102,14 +148,34 @@ export function MonsterStage({
   const xpPercent = Math.round(xpInfo.progressRatio * 100);
   const xpToNext = Math.max(0, xpInfo.nextLevelXp - xpInfo.xp);
 
+  // Tiến độ thanh Combo hướng tới mốc 5 rồi mốc 10
+  const comboTarget = dungeon.combo < 5 ? 5 : 10;
+  const comboProgressPct = Math.min(
+    100,
+    Math.round((dungeon.combo / comboTarget) * 100)
+  );
+  const oneHitLeft =
+    dungeon.phase === 'fighting' && isOneHitAway(monster, dungeon.combo);
+
   const canSwap =
     !paused &&
     !challengeActive &&
+    !bossIntroActive &&
+    !bossFinisherActive &&
     dungeon.phase === 'fighting' &&
     dungeon.swapsRemaining > 0;
 
+  const shakeClass =
+    impactState === 'crit'
+      ? 'fq-shake-crit'
+      : impactState === 'normal'
+        ? 'fq-shake-light'
+        : '';
+
+  const breatherSeconds = Math.max(1, Math.ceil(breatherRemainingMs / 1000));
+
   return (
-    <section className="space-y-4">
+    <section className={`space-y-4 ${reducedFx ? 'fq-reduced-fx' : ''}`}>
       {/* Thanh XP nhân vật + cảnh báo chạm giới hạn XP */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/95 p-4 shadow-lg">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -147,234 +213,367 @@ export function MonsterStage({
         )}
       </div>
 
-      {/* Thẻ quái vật chính (phong cách hầm ngục, chữ to đọc từ xa 1m) */}
+      {/* Thẻ sân đấu quái vật chính (rung nhẹ khi đánh trúng) */}
       <div
         className={`relative overflow-hidden rounded-2xl border p-5 shadow-2xl bg-gradient-to-br ${visual.accentClass} ${
           monster.isBoss
-            ? 'border-fuchsia-500/60'
+            ? 'border-fuchsia-400/75 shadow-fuchsia-950/50'
             : 'border-slate-700/80'
-        }`}
+        } ${shakeClass}`}
       >
-        {/* Hàng trên: tiến độ phòng + huy hiệu Boss/Thường + Combo */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-lg bg-slate-950/80 px-3 py-1 font-mono text-xs font-bold text-slate-200">
-              {texts.stagePrefix} {monster.stageNumber}/{dungeon.encounters.length}
-            </span>
-            <span
-              className={`rounded-lg px-3 py-1 text-xs font-extrabold tracking-wide ${
-                monster.isBoss
-                  ? 'bg-fuchsia-500/25 text-fuchsia-200 border border-fuchsia-400/50'
-                  : 'bg-slate-800/90 text-slate-200'
-              }`}
-            >
-              {monster.isBoss ? texts.bossTag : texts.normalTag}
-            </span>
-          </div>
-
-          {/* Huy hiệu Combo (chỉ ảnh hưởng sát thương) */}
+        {/* Tia sáng chí mạng phía sau khi tung đòn >= 0.9 chất lượng */}
+        {!reducedFx && activeHit?.isCrit && (
           <div
-            className={`rounded-xl border px-3 py-1.5 text-right ${
-              dungeon.combo >= 3
-                ? 'border-amber-400/60 bg-amber-500/15 text-amber-200'
-                : 'border-slate-700 bg-slate-950/70 text-slate-300'
-            }`}
-          >
-            <div className="font-mono text-lg font-black leading-none">
-              {texts.comboLabel} x{dungeon.combo}
-            </div>
-            <div className="mt-0.5 text-[10px] opacity-80">
-              {texts.comboDamageHint}
-            </div>
-          </div>
-        </div>
-
-        {/* Chấm tiến độ các phòng trong hầm ngục */}
-        <div className="mt-3 flex items-center gap-1.5">
-          {dungeon.encounters.map((enc, idx) => (
-            <div
-              key={`${enc.stageNumber}-${enc.exercise}`}
-              className={`h-2 flex-1 rounded-full ${
-                enc.defeated
-                  ? 'bg-emerald-400'
-                  : idx === dungeon.currentIndex
-                    ? enc.isBoss
-                      ? 'bg-fuchsia-400'
-                      : 'bg-amber-400'
-                    : 'bg-slate-800'
-              }`}
-            />
-          ))}
-        </div>
-
-        {/* Hình quái + Tên + Lời kêu gọi động tác lớn */}
-        <div className="mt-5 flex flex-wrap items-center gap-4">
-          <div
-            className={`relative flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl border-2 bg-slate-950/75 text-5xl shadow-inner ${visual.ringClass} ${
-              monster.defeated ? 'opacity-40 grayscale' : ''
-            }`}
+            key={`rays-${hitSeq}`}
             aria-hidden="true"
-          >
-            <span>{visual.emoji}</span>
-            {monster.isBoss && (
-              <span className="absolute -top-2 -right-2 rounded-full bg-fuchsia-600 px-2 py-0.5 text-[10px] font-black text-white shadow">
-                👑
+            className="fq-crit-rays pointer-events-none absolute -inset-12 z-0 rounded-full"
+          />
+        )}
+
+        <div className="relative z-10">
+          {/* Hàng trên: tiến độ phòng + huy hiệu Boss/Thường + Thanh Combo */}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-lg bg-slate-950/80 px-3 py-1 font-mono text-xs font-bold text-slate-200">
+                {texts.stagePrefix} {monster.stageNumber}/
+                {dungeon.encounters.length}
               </span>
+              <span
+                className={`rounded-lg px-3 py-1 text-xs font-extrabold tracking-wide ${
+                  monster.isBoss
+                    ? 'border border-fuchsia-400/60 bg-fuchsia-500/25 text-fuchsia-100'
+                    : 'bg-slate-800/90 text-slate-200'
+                }`}
+              >
+                {monster.isBoss ? texts.bossTag : texts.normalTag}
+              </span>
+            </div>
+
+            {/* Thanh Combo nổi bật hướng tới mốc x5 / x10 */}
+            <div
+              className={`min-w-[175px] rounded-xl border px-3 py-2 ${
+                dungeon.combo >= 10
+                  ? 'border-fuchsia-400/70 bg-fuchsia-950/50 text-fuchsia-100'
+                  : dungeon.combo >= 5
+                    ? 'border-amber-400/70 bg-amber-950/50 text-amber-100'
+                    : 'border-slate-700 bg-slate-950/75 text-slate-200'
+              } ${comboCheer ? 'fq-combo-pop' : ''}`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-mono text-lg font-black leading-none">
+                  {texts.comboLabel} x{dungeon.combo}
+                </span>
+                <span className="text-[10px] font-semibold opacity-80">
+                  {dungeon.combo >= 10
+                    ? texts.comboMaxReached
+                    : `${texts.comboNextMilestone} x${comboTarget}`}
+                </span>
+              </div>
+              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-200 ${
+                    dungeon.combo >= 10
+                      ? 'bg-fuchsia-400'
+                      : dungeon.combo >= 5
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-400'
+                  }`}
+                  style={{ width: `${comboProgressPct}%` }}
+                />
+              </div>
+              <div className="mt-1 text-[10px] opacity-75">
+                {texts.comboDamageHint}
+              </div>
+            </div>
+          </div>
+
+          {/* Câu cổ vũ ngắn, vui ở mốc Combo x5 / x10 */}
+          {comboCheer && (
+            <div className="fq-combo-pop mt-3 rounded-xl border border-amber-400/60 bg-amber-500/20 px-4 py-2 text-center text-sm font-extrabold text-amber-100">
+              🔥 {texts.comboCheers[comboCheer]}
+            </div>
+          )}
+
+          {/* Chấm tiến độ các phòng trong hầm ngục */}
+          <div className="mt-3 flex items-center gap-1.5">
+            {dungeon.encounters.map((enc, idx) => (
+              <div
+                key={`${enc.stageNumber}-${enc.exercise}`}
+                className={`h-2 flex-1 rounded-full ${
+                  enc.defeated
+                    ? 'bg-emerald-400'
+                    : idx === dungeon.currentIndex
+                      ? enc.isBoss
+                        ? 'bg-fuchsia-400'
+                        : 'bg-amber-400'
+                      : 'bg-slate-800'
+                }`}
+              />
+            ))}
+          </div>
+
+          {/* Hình quái (nhấp nháy khi trúng đòn) + Số sát thương bay lên */}
+          <div className="relative mt-5 flex flex-wrap items-center gap-4">
+            <div
+              className={`relative flex shrink-0 items-center justify-center rounded-2xl border-2 bg-slate-950/75 shadow-inner ${
+                monster.isBoss
+                  ? 'h-28 w-28 border-fuchsia-400/70 text-6xl'
+                  : `h-24 w-24 text-5xl ${visual.ringClass}`
+              } ${monster.defeated ? 'opacity-40 grayscale' : ''} ${
+                impactState !== 'none' ? 'fq-monster-hit' : ''
+              }`}
+              aria-hidden="true"
+            >
+              <span>{visual.emoji}</span>
+              {monster.isBoss && (
+                <span className="absolute -top-2.5 -right-2.5 rounded-full bg-fuchsia-600 px-2 py-0.5 text-xs font-black text-white shadow">
+                  👑
+                </span>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1 space-y-1">
+              <h2
+                className={`font-black tracking-tight text-white ${
+                  monster.isBoss
+                    ? 'text-3xl sm:text-4xl'
+                    : 'text-2xl sm:text-3xl'
+                }`}
+              >
+                {monster.isBoss ? monsterInfo.bossName : monsterInfo.name}
+              </h2>
+              <p className="text-base font-bold text-emerald-300 sm:text-lg">
+                {monsterInfo.actionLabel}
+              </p>
+              <p className="text-xs text-slate-300">
+                {i18n.play.practice.exercises[monster.exercise].name} ·{' '}
+                {i18n.play.practice.exercises[monster.exercise].meta}
+              </p>
+            </div>
+
+            {/* Số sát thương & +XP bay lên ngay bên cạnh quái */}
+            {activeHit && (
+              <div
+                key={`float-${hitSeq}`}
+                className="fq-float-up pointer-events-none absolute right-2 -top-3 z-20 flex flex-col items-end"
+              >
+                {activeHit.isCrit && (
+                  <span className="rounded-lg bg-amber-400 px-2.5 py-0.5 text-lg font-black tracking-wide text-slate-950 shadow-lg sm:text-2xl">
+                    ⚡ {texts.critBanner}
+                  </span>
+                )}
+                <span
+                  className={`font-mono font-black drop-shadow-[0_3px_6px_rgba(0,0,0,0.85)] ${
+                    activeHit.isCrit
+                      ? 'text-4xl text-amber-300'
+                      : 'text-3xl text-white'
+                  }`}
+                >
+                  -{activeHit.damage} {texts.damageUnit}
+                </span>
+                <span className="rounded-md bg-emerald-500/90 px-2 py-0.5 font-mono text-xs font-extrabold text-slate-950 shadow">
+                  {texts.xpFloatingPrefix}
+                  {activeHit.tentativeXpAdded} {texts.xpUnit}
+                </span>
+              </div>
             )}
           </div>
 
-          <div className="min-w-0 flex-1 space-y-1">
-            <h2 className="text-2xl font-black tracking-tight text-white sm:text-3xl">
-              {monster.isBoss ? monsterInfo.bossName : monsterInfo.name}
-            </h2>
-            <p className="text-base font-bold text-emerald-300 sm:text-lg">
-              {monsterInfo.actionLabel}
-            </p>
-            <p className="text-xs text-slate-300">
-              {i18n.play.practice.exercises[monster.exercise].name} ·{' '}
-              {i18n.play.practice.exercises[monster.exercise].meta}
-            </p>
-          </div>
-        </div>
-
-        {/* Thanh HP quái lớn, rõ nét */}
-        <div className="mt-5 space-y-1.5">
-          <div className="flex items-baseline justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              {texts.hpLabel}
-            </span>
-            <span className="font-mono text-xl font-extrabold text-white">
-              {monster.hp} / {monster.maxHp}
-            </span>
-          </div>
-
-          <div className="h-5 w-full overflow-hidden rounded-full border border-slate-700 bg-slate-950/90 p-0.5">
-            <div
-              className={`h-full rounded-full transition-[width] duration-200 ${
-                monster.isBoss
-                  ? 'bg-gradient-to-r from-fuchsia-600 to-rose-400'
-                  : hpPercent <= 30
-                    ? 'bg-gradient-to-r from-rose-600 to-amber-400'
-                    : 'bg-gradient-to-r from-rose-500 to-orange-400'
-              }`}
-              style={{ width: `${hpPercent}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Thanh Nạp lực (bài giữ) hoặc Nhịp tung đòn (bài động) */}
-        <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/75 p-3.5">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
-            <span>{isHold ? texts.chargeBarLabel : texts.repProgressLabel}</span>
-            <span className="font-mono text-base font-bold text-sky-300">
-              {isHold
-                ? `${(currentHoldMs / 1000).toFixed(1)}s / ${(targetHoldMs / 1000).toFixed(1)}s`
-                : `${chargePercent}%`}
-            </span>
-          </div>
-
-          <div className="mt-2 h-3.5 w-full overflow-hidden rounded-full bg-slate-800">
-            <div
-              className={`h-full rounded-full transition-[width] duration-100 ease-linear ${
-                !frameReady
-                  ? 'bg-amber-500/60'
-                  : chargePercent >= 100
-                    ? 'bg-emerald-400'
-                    : 'bg-sky-400'
-              }`}
-              style={{ width: `${chargePercent}%` }}
-            />
-          </div>
-
-          {isHold && (
-            <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-              <span>{i18n.play.practice.reachPoseBarLabel}</span>
-              <span className="font-mono text-slate-200">
-                {Math.round(movementProgress * 100)}%
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Đòn đánh nổi: Sát thương, CHÍ MẠNG (chữ lớn), +XP nổi */}
-        {activeHit && (
-          <div
-            key={hitSeq}
-            className={`mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3 ${
-              activeHit.isCrit
-                ? 'border-amber-400 bg-amber-500/20 text-amber-100'
-                : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-100'
-            }`}
-          >
-            <div className="flex flex-wrap items-baseline gap-2.5">
-              {activeHit.isCrit && (
-                <span className="text-2xl font-black tracking-wide text-amber-300">
-                  {texts.critBanner}
+          {/* Thanh HP quái (Boss có thanh HP lớn nổi bật + nhãn "Đòn cuối!" khi còn 1 đòn) */}
+          <div className="mt-5 space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  {texts.hpLabel}
                 </span>
-              )}
-              <span className="font-mono text-2xl font-black text-white">
-                -{activeHit.damage} {texts.damageUnit}
-              </span>
-              <span className="font-mono text-xs opacity-85">
-                (Q: {activeHit.quality.toFixed(2)})
+                {oneHitLeft && (
+                  <span className="rounded-full border border-amber-400 bg-amber-500/25 px-3 py-0.5 text-xs font-black uppercase tracking-wide text-amber-200">
+                    🎯 {texts.lastHitBadge}
+                  </span>
+                )}
+              </div>
+
+              <span
+                className={`font-mono font-extrabold text-white ${
+                  monster.isBoss ? 'text-2xl' : 'text-xl'
+                }`}
+              >
+                {monster.hp} / {monster.maxHp}
               </span>
             </div>
 
-            <span className="rounded-lg bg-emerald-500/25 px-3 py-1 font-mono text-base font-extrabold text-emerald-200">
-              {texts.xpFloatingPrefix}
-              {activeHit.tentativeXpAdded} {texts.xpUnit}
+            <div
+              className={`w-full overflow-hidden rounded-full border bg-slate-950/90 p-0.5 ${
+                monster.isBoss
+                  ? 'h-7 border-fuchsia-400/60'
+                  : 'h-5 border-slate-700'
+              }`}
+            >
+              <div
+                className={`h-full rounded-full transition-[width] duration-200 ${
+                  monster.isBoss
+                    ? 'bg-gradient-to-r from-fuchsia-600 via-pink-500 to-rose-400'
+                    : oneHitLeft || hpPercent <= 30
+                      ? 'bg-gradient-to-r from-rose-600 to-amber-400'
+                      : 'bg-gradient-to-r from-rose-500 to-orange-400'
+                }`}
+                style={{ width: `${hpPercent}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Thanh Nạp lực (bài giữ) hoặc Nhịp tung đòn (bài động) */}
+          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/75 p-3.5">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+              <span>{isHold ? texts.chargeBarLabel : texts.repProgressLabel}</span>
+              <span className="font-mono text-base font-bold text-sky-300">
+                {isHold
+                  ? `${(currentHoldMs / 1000).toFixed(1)}s / ${(targetHoldMs / 1000).toFixed(1)}s`
+                  : `${chargePercent}%`}
+              </span>
+            </div>
+
+            <div className="mt-2 h-3.5 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={`h-full rounded-full transition-[width] duration-100 ease-linear ${
+                  !frameReady
+                    ? 'bg-amber-500/60'
+                    : chargePercent >= 100
+                      ? 'bg-emerald-400'
+                      : 'bg-sky-400'
+                }`}
+                style={{ width: `${chargePercent}%` }}
+              />
+            </div>
+
+            {isHold && (
+              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                <span>{i18n.play.practice.reachPoseBarLabel}</span>
+                <span className="font-mono text-slate-200">
+                  {Math.round(movementProgress * 100)}%
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Gợi ý form to, rõ ngay trong sân đấu */}
+          <div
+            className={`mt-4 rounded-xl border px-4 py-3 text-base font-bold leading-snug ${HINT_TONE_STYLES[hintTone]}`}
+          >
+            {hintText}
+          </div>
+
+          {/* Nút điều khiển lượt: Tạm dừng, Đổi quái (1 lần miễn phí), Kết thúc lượt */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={
+                challengeActive ||
+                bossIntroActive ||
+                bossFinisherActive ||
+                dungeon.phase !== 'fighting'
+              }
+              onClick={onTogglePause}
+              className="cursor-pointer rounded-xl border border-slate-600 bg-slate-950/90 px-4 py-2.5 text-sm font-bold text-slate-100 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {paused ? texts.controls.resume : texts.controls.pause}
+            </button>
+
+            <button
+              type="button"
+              disabled={!canSwap}
+              onClick={onSwapMonster}
+              className="cursor-pointer rounded-xl border border-sky-400/50 bg-sky-500/20 px-4 py-2.5 text-sm font-bold text-sky-100 transition hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {dungeon.swapsRemaining > 0
+                ? `${texts.controls.swapMonster} (${dungeon.swapsRemaining})`
+                : texts.controls.swapUsed}
+            </button>
+
+            <button
+              type="button"
+              disabled={bossFinisherActive}
+              onClick={onFinishRun}
+              className="ml-auto cursor-pointer rounded-xl border border-rose-500/50 bg-rose-950/70 px-4 py-2.5 text-sm font-bold text-rose-200 transition hover:bg-rose-900/70 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {texts.controls.finishRun}
+            </button>
+          </div>
+        </div>
+
+        {/* Lớp phủ 1: Nghỉ lấy hơi 4s giữa các quái (gợi ý uống nước, chỉnh lại tư thế) */}
+        {dungeon.phase === 'transitioning' && breatherRemainingMs > 0 && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950/90 p-6 text-center backdrop-blur-sm">
+            <span className="rounded-full border border-emerald-400/50 bg-emerald-500/20 px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-emerald-200">
+              {texts.breather.badge} · {breatherSeconds}{' '}
+              {texts.breather.countdownSuffix}
             </span>
+
+            <h3 className="text-2xl font-black text-white sm:text-3xl">
+              {texts.breather.title}
+            </h3>
+
+            {breatherTip && (
+              <p className="max-w-md text-base font-medium text-sky-200">
+                💧 {breatherTip}
+              </p>
+            )}
+
+            {nextMonster && (
+              <p className="text-sm text-slate-300">
+                {texts.breather.nextMonsterPrefix}{' '}
+                <strong className="text-white">
+                  {nextMonster.isBoss
+                    ? texts.monsters[nextMonster.exercise].bossName
+                    : texts.monsters[nextMonster.exercise].name}
+                </strong>{' '}
+                ({i18n.play.practice.exercises[nextMonster.exercise].name})
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={onSkipBreather}
+              className="mt-1 cursor-pointer rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-extrabold text-slate-950 transition hover:bg-emerald-400"
+            >
+              {texts.breather.skipButton}
+            </button>
           </div>
         )}
 
-        {/* Thông báo vừa hạ gục quái (~1s chuyển quái kế) */}
-        {dungeon.phase === 'transitioning' && (
-          <div className="mt-4 rounded-xl border border-emerald-400 bg-emerald-950/90 px-4 py-3 text-center text-base font-extrabold text-emerald-200">
-            {texts.defeatedBanner}
+        {/* Lớp phủ 2: Màn chào sân riêng của Boss cuối */}
+        {bossIntroActive && monster.isBoss && (
+          <div className="fq-boss-intro pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-gradient-to-b from-fuchsia-950/95 via-slate-950/95 to-slate-950/95 p-6 text-center">
+            <span className="rounded-full border border-fuchsia-400 bg-fuchsia-500/25 px-4 py-1 text-xs font-black tracking-widest text-fuchsia-200">
+              👑 {texts.boss.introBadge}
+            </span>
+            <div className="text-6xl" aria-hidden="true">
+              {visual.emoji}
+            </div>
+            <h3 className="text-3xl font-black tracking-tight text-white sm:text-4xl">
+              {monsterInfo.bossName}
+            </h3>
+            <p className="max-w-md text-sm font-semibold text-fuchsia-200">
+              {texts.boss.introSubtitle}
+            </p>
           </div>
         )}
 
-        {/* Gợi ý form to, rõ ngay trong sân đấu */}
-        <div
-          className={`mt-4 rounded-xl border px-4 py-3 text-base font-bold leading-snug ${HINT_TONE_STYLES[hintTone]}`}
-        >
-          {hintText}
-        </div>
+        {/* Lớp phủ 3: Hiệu ứng làm chậm 0,5s đòn kết liễu Boss */}
+        {bossFinisherActive && (
+          <div className="fq-boss-finisher pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-amber-500/35 via-fuchsia-950/90 to-slate-950/95 p-6 text-center backdrop-blur-[2px]">
+            <span className="text-3xl font-black tracking-wider text-amber-300 drop-shadow sm:text-4xl">
+              ⚡ {texts.boss.finisherBadge}
+            </span>
+            <p className="text-base font-bold text-white">
+              {texts.boss.finisherSubtitle}
+            </p>
+          </div>
+        )}
 
-        {/* Nút điều khiển lượt: Tạm dừng, Đổi quái (1 lần miễn phí), Kết thúc lượt */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={challengeActive || dungeon.phase !== 'fighting'}
-            onClick={onTogglePause}
-            className="cursor-pointer rounded-xl border border-slate-600 bg-slate-950/90 px-4 py-2.5 text-sm font-bold text-slate-100 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {paused ? texts.controls.resume : texts.controls.pause}
-          </button>
-
-          <button
-            type="button"
-            disabled={!canSwap}
-            onClick={onSwapMonster}
-            className="cursor-pointer rounded-xl border border-sky-400/50 bg-sky-500/20 px-4 py-2.5 text-sm font-bold text-sky-100 transition hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {dungeon.swapsRemaining > 0
-              ? `${texts.controls.swapMonster} (${dungeon.swapsRemaining})`
-              : texts.controls.swapUsed}
-          </button>
-
-          <button
-            type="button"
-            onClick={onFinishRun}
-            className="ml-auto cursor-pointer rounded-xl border border-rose-500/50 bg-rose-950/70 px-4 py-2.5 text-sm font-bold text-rose-200 transition hover:bg-rose-900/70"
-          >
-            {texts.controls.finishRun}
-          </button>
-        </div>
-
-        {/* Lớp phủ Tạm dừng */}
+        {/* Lớp phủ 4: Tạm dừng */}
         {paused && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-slate-950/85 p-6 text-center backdrop-blur-sm">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950/85 p-6 text-center backdrop-blur-sm">
             <h3 className="text-3xl font-black text-white">
               {texts.pausedOverlayTitle}
             </h3>

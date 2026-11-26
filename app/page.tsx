@@ -3,51 +3,110 @@
 import Link from 'next/link';
 import { useGameStore } from '@/lib/game/store';
 import { getXpProgressInfo } from '@/lib/game/engineAdapter';
+import { COSMETIC_BY_ID } from '@/lib/game/cosmetics';
+import { unlockGameAudio } from '@/lib/game/sound';
 import { i18n } from '@/lib/i18n';
 
 /**
- * Trang chủ ("/").
- * - Nhập tên hiển thị tùy chọn (lưu trong Zustand RAM, không localStorage).
- * - Hiển thị cấp độ & XP hiện tại của phiên, kèm nút vào Dungeon Run và Chế độ luyện tập.
- * - Có dòng nhắc rõ ràng: "Tải lại trang sẽ mất tiến độ".
+ * Trang chủ ("/") — Phong cách Hầm Ngục tối màu (F5b):
+ * - Tiêu đề FitQuest, câu cốt truyện "Hang động Cứng Cổ đang chờ bạn…",
+ *   nút "Bắt đầu Dungeon Run" nổi bật, nút luyện tập tự do và nhắc "Tải lại trang sẽ mất tiến độ".
  */
 export default function HomePage() {
   const displayName = useGameStore((state) => state.displayName);
   const setDisplayName = useGameStore((state) => state.setDisplayName);
   const totalXp = useGameStore((state) => state.totalXp);
+  const cosmeticInventory = useGameStore((state) => state.cosmeticInventory);
+  const equippedCosmetics = useGameStore((state) => state.equippedCosmetics);
+
   const xpInfo = getXpProgressInfo(totalXp);
+  const equippedTitle = equippedCosmetics.title
+    ? COSMETIC_BY_ID[equippedCosmetics.title]
+    : null;
+  const equippedSkin = equippedCosmetics.skin
+    ? COSMETIC_BY_ID[equippedCosmetics.skin]
+    : null;
+  const equippedFrame = equippedCosmetics.frame
+    ? COSMETIC_BY_ID[equippedCosmetics.frame]
+    : null;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-8 text-slate-100">
-      <div className="w-full max-w-md space-y-6 rounded-3xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
-        {/* Tiêu đề game và mô tả ngắn */}
-        <div className="space-y-2 text-center">
-          <h1 className="text-4xl font-black tracking-tight text-emerald-400">
-            {i18n.home.title}
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/70 px-4 py-10 text-slate-100">
+      {/* Ánh sáng hầm ngục nhẹ bằng CSS thuần (không tải ảnh ngoài) */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-32 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-emerald-500/10 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -bottom-32 right-1/4 h-72 w-72 rounded-full bg-fuchsia-500/10 blur-3xl"
+      />
+
+      <div className="relative w-full max-w-lg space-y-6 rounded-3xl border border-slate-800/90 bg-slate-900/90 p-8 shadow-2xl backdrop-blur">
+        {/* Huy hiệu, Tiêu đề & Câu cốt truyện Hầm Ngục */}
+        <div className="space-y-3 text-center">
+          <span className="inline-block rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-emerald-300">
+            ⚔️ {i18n.home.dungeonTag}
+          </span>
+
+          <h1 className="text-5xl font-black tracking-tight text-white">
+            <span className="bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-clip-text text-transparent">
+              {i18n.home.title}
+            </span>
           </h1>
+
+          <p className="text-lg font-extrabold text-amber-200">
+            {i18n.home.storyLine}
+          </p>
+
           <p className="text-sm leading-relaxed text-slate-300">
             {i18n.home.description}
           </p>
         </div>
 
-        {/* Trạng thái nhân vật tạm trong RAM (Cấp độ + XP) */}
-        <div className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-3 text-xs">
-          <span className="font-semibold text-slate-300">
-            {i18n.home.levelPrefix}{' '}
-            <strong className="font-mono text-base text-emerald-400">
-              {xpInfo.level}
-            </strong>
-          </span>
-          <span className="font-mono text-slate-300">
+        {/* Trạng thái nhân vật tạm trong RAM (Cấp độ, XP, trang bị đang mặc) */}
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/85 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-2xl ${
+                equippedFrame ? equippedFrame.accentClass : ''
+              }`}
+              aria-hidden="true"
+            >
+              {equippedSkin ? equippedSkin.icon : '🛡️'}
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-300">
+                {i18n.home.levelPrefix}{' '}
+                <strong className="font-mono text-base text-emerald-400">
+                  {xpInfo.level}
+                </strong>
+                {equippedTitle && (
+                  <span className="ml-2 text-amber-300">
+                    {equippedTitle.icon}{' '}
+                    {i18n.dungeon.loot.items[equippedTitle.id]}
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-400">
+                {i18n.home.cosmeticCountPrefix}{' '}
+                <span className="font-mono text-slate-200">
+                  {cosmeticInventory.length}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <span className="font-mono text-xs font-bold text-slate-200">
             {xpInfo.xp} / {xpInfo.cap} {i18n.home.xpUnit}
           </span>
         </div>
 
-        {/* Ô nhập tên hiển thị tùy chọn (lưu trong Zustand) */}
+        {/* Ô nhập tên hiệp sĩ tùy chọn (lưu trong Zustand RAM) */}
         <div className="space-y-2">
           <label
             htmlFor="display-name"
-            className="block text-sm font-medium text-slate-200"
+            className="block text-sm font-semibold text-slate-200"
           >
             {i18n.home.nameLabel}
           </label>
@@ -62,18 +121,20 @@ export default function HomePage() {
           />
         </div>
 
-        {/* Nút vào Dungeon Run (chính) và Chế độ luyện tập tự do (F4) */}
+        {/* Nút Bắt đầu Dungeon Run nổi bật + nút Chế độ luyện tập tự do */}
         <div className="space-y-2.5">
           <Link
             href="/play"
-            className="block w-full rounded-xl bg-emerald-500 px-5 py-3.5 text-center text-base font-extrabold text-slate-950 transition hover:bg-emerald-400"
+            onClick={unlockGameAudio}
+            className="block w-full rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-400 px-6 py-4 text-center text-lg font-black tracking-wide text-slate-950 shadow-lg shadow-emerald-950/60 transition hover:from-emerald-400 hover:to-teal-300"
           >
-            {i18n.home.startButton}
+            ⚔️ {i18n.home.startButton}
           </Link>
 
           <Link
             href="/play?mode=practice"
-            className="block w-full rounded-xl border border-slate-700 bg-slate-950 px-5 py-2.5 text-center text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
+            onClick={unlockGameAudio}
+            className="block w-full rounded-xl border border-slate-700 bg-slate-950/80 px-5 py-2.5 text-center text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
           >
             {i18n.home.practiceButton}
           </Link>

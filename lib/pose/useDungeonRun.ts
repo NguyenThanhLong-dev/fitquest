@@ -23,11 +23,11 @@ import {
 import {
   SessionGuard,
   getExerciseDef,
+  getLevelFromXp,
   getXpProgressInfo,
   type XpProgressInfo,
 } from '@/lib/game/engineAdapter';
 import {
-  DUNGEON_CONFIG,
   advanceMonsterTransition,
   applyCancelledRepToDungeon,
   applyRepToDungeon,
@@ -39,24 +39,44 @@ import {
   type DungeonRunState,
   type DungeonSummaryData,
   type MonsterEncounter,
+  type SkillStatus,
 } from '@/lib/game/dungeon';
+import {
+  FX_CONFIG,
+  getBreatherTipIndex,
+  getComboMilestone,
+  getNewlyUnlockedSkills,
+  rollLootChest,
+  type ComboMilestone,
+  type LootChestRoll,
+} from '@/lib/game/cosmetics';
+import { playGameSound, unlockGameAudio } from '@/lib/game/sound';
 import { useGameStore } from '@/lib/game/store';
 import type { ProgressTone } from '@/components/ProgressRing';
 import { i18n } from '@/lib/i18n';
 
-// Chỉ đồng bộ React state tối đa mỗi 100ms khi không có sự kiện quan trọng
 const UI_SYNC_INTERVAL_MS = 100;
 const POST_REP_FEEDBACK_MS = 2200;
 const CANCELLED_BANNER_MS = 2600;
 const OUTCOME_BANNER_MS = 3500;
-const HIT_BANNER_MS = 1800;
+const HIT_BANNER_MS = 1500;
+
+export interface LevelUpCelebration {
+  newLevel: number;
+  unlockedSkills: SkillStatus[];
+  seq: number;
+}
 
 export interface DungeonRunUiState {
   initialized: boolean;
   paused: boolean;
   dungeon: DungeonRunState;
   currentMonster: MonsterEncounter | null;
+  nextMonster: MonsterEncounter | null;
   summary: DungeonSummaryData | null;
+  /** Rương chiến lợi phẩm cosmetic F5b (null nếu rejected). */
+  lootRoll: LootChestRoll | null;
+  chestOpened: boolean;
   frameCheck: FrameStabilitySnapshot;
   liveness: LivenessRunSnapshot;
   recentChallengeOutcome: 'passed' | 'failed' | null;
@@ -68,10 +88,18 @@ export interface DungeonRunUiState {
   awaitingRest: boolean;
   hintText: string;
   hintTone: ProgressTone;
-  /** Sự kiện đòn đánh vừa tung ra để hiển thị sát thương / Chí mạng / +XP nổi. */
   activeHit: DamageEvent | null;
   hitSeq: number;
-  /** Thanh XP hiển thị trực tiếp (cập nhật theo XP tạm khi đang đánh, và XP chính thức khi xong). */
+  /** Thời gian nghỉ lấy hơi còn lại (ms) giữa các quái (3–5s). */
+  breatherRemainingMs: number;
+  breatherTip: string | null;
+  /** Màn chào sân Boss cuối & hiệu ứng làm chậm 0,5s đòn kết liễu Boss. */
+  bossIntroActive: boolean;
+  bossFinisherActive: boolean;
+  /** Cổ vũ khi chạm mốc Combo x5 hoặc x10. */
+  comboCheer: ComboMilestone | null;
+  /** Màn chúc mừng lên level (<2s) kèm kỹ năng vừa mở. */
+  levelUpCelebration: LevelUpCelebration | null;
   liveXpInfo: XpProgressInfo;
 }
 
@@ -79,6 +107,8 @@ interface DungeonRuntime {
   paused: boolean;
   dungeon: DungeonRunState;
   summary: DungeonSummaryData | null;
+  lootRoll: LootChestRoll | null;
+  chestOpened: boolean;
   finalized: boolean;
   inRep: boolean;
   awaitingRest: boolean;
@@ -97,6 +127,17 @@ interface DungeonRuntime {
   hintTone: ProgressTone;
   hitSeq: number;
   hitVisibleUntil: number;
+  // Lớp trình bày F5b (chỉ hiển thị & âm thanh, không đổi logic XP/chống gian lận)
+  breatherEndWallMs: number | null;
+  breatherTip: string | null;
+  bossIntroEndWallMs: number | null;
+  bossFinisherPending: boolean;
+  comboCheer: ComboMilestone | null;
+  comboCheerEndWallMs: number | null;
+  highestCelebratedLevel: number;
+  levelUpCelebration: LevelUpCelebration | null;
+  levelUpSeq: number;
+  lastChallengeSecond: number | null;
   lastUiSyncAt: number;
   lastFrameT: number;
 }
@@ -141,13 +182,16 @@ function mapRepFlagToHint(exerciseId: ExerciseId, flag: string): string {
 
 function createRuntime(
   dungeon: DungeonRunState,
-  liveness: LivenessRunSnapshot
+  liveness: LivenessRunSnapshot,
+  startingLevel: number
 ): DungeonRuntime {
   const firstMonster = dungeon.encounters[0];
   return {
     paused: false,
     dungeon,
     summary: null,
+    lootRoll: null,
+    chestOpened: false,
     finalized: false,
     inRep: false,
     awaitingRest: false,
@@ -168,13 +212,25 @@ function createRuntime(
     hintTone: 'neutral',
     hitSeq: 0,
     hitVisibleUntil: 0,
+    breatherEndWallMs: null,
+    breatherTip: null,
+    bossIntroEndWallMs: null,
+    bossFinisherPending: false,
+    comboCheer: null,
+    comboCheerEndWallMs: null,
+    highestCelebratedLevel: startingLevel,
+    levelUpCelebration: null,
+    levelUpSeq: 0,
+    lastChallengeSecond: null,
     lastUiSyncAt: 0,
     lastFrameT: 0,
   };
 }
 
 function snapshotUi(rt: DungeonRuntime, initialized: boolean): DungeonRunUiState {
+  const nowWall = typeof performance !== 'undefined' ? performance.now() : 0;
   const currentMonster = rt.dungeon.encounters[rt.dungeon.currentIndex] ?? null;
+  const nextMonster = rt.dungeon.encounters[rt.dungeon.currentIndex + 1] ?? null;
   const exerciseId: ExerciseId = currentMonster?.exercise ?? 'squat';
   const targetHoldMs = getExerciseDef(exerciseId).holdMs;
   const frameReady = rt.frameCheck.stableOk;
@@ -201,6 +257,21 @@ function snapshotUi(rt: DungeonRuntime, initialized: boolean): DungeonRunUiState
       ? rt.dungeon.lastHit
       : null;
 
+  const breatherRemainingMs =
+    rt.dungeon.phase === 'transitioning' && rt.breatherEndWallMs !== null
+      ? Math.max(0, rt.breatherEndWallMs - nowWall)
+      : 0;
+
+  const bossIntroActive =
+    rt.bossIntroEndWallMs !== null && nowWall < rt.bossIntroEndWallMs;
+
+  const comboCheer =
+    rt.comboCheer !== null &&
+    rt.comboCheerEndWallMs !== null &&
+    nowWall < rt.comboCheerEndWallMs
+      ? rt.comboCheer
+      : null;
+
   const displayedXp = rt.summary
     ? rt.summary.totalXpAfter
     : rt.dungeon.startingTotalXp + rt.dungeon.tentativeXpEarned;
@@ -210,7 +281,10 @@ function snapshotUi(rt: DungeonRuntime, initialized: boolean): DungeonRunUiState
     paused: rt.paused,
     dungeon: rt.dungeon,
     currentMonster,
+    nextMonster,
     summary: rt.summary,
+    lootRoll: rt.lootRoll,
+    chestOpened: rt.chestOpened,
     frameCheck: rt.frameCheck,
     liveness: rt.liveness,
     recentChallengeOutcome: rt.recentChallengeOutcome,
@@ -224,15 +298,21 @@ function snapshotUi(rt: DungeonRuntime, initialized: boolean): DungeonRunUiState
     hintTone: rt.hintTone,
     activeHit,
     hitSeq: rt.hitSeq,
+    breatherRemainingMs,
+    breatherTip: rt.breatherTip,
+    bossIntroActive,
+    bossFinisherActive: rt.bossFinisherPending,
+    comboCheer,
+    levelUpCelebration: rt.levelUpCelebration,
     liveXpInfo: getXpProgressInfo(displayedXp),
   };
 }
 
 /**
- * Hook điều phối toàn bộ vòng lặp Dungeon Run (F5a):
- * - Kết nối FrameStabilityGate (F4 Lớp 0), LivenessRunController (F4 Lớp 3b),
- *   RepCounter + SessionGuard (pose-engine) và logic thuần lib/game/dungeon.ts.
- * - Không sinh seed lúc SSR (tránh lỗi Hydration), không re-render React mỗi frame.
+ * Hook điều phối Dungeon Run (F5a + lớp trình bày/cosmetic F5b):
+ * - Giữ nguyên 100% logic XP, finalizeRun và chống gian lận của F5a.
+ * - Bổ sung nghỉ lấy hơi 4s giữa các quái, màn chào Boss, làm chậm 0,5s đòn kết liễu Boss,
+ *   màn chúc mừng lên level <2s, âm thanh Web Audio API và rương cosmetic theo seed.
  */
 export function useDungeonRun() {
   const counterRef = useRef<RepCounter | null>(null);
@@ -241,9 +321,14 @@ export function useDungeonRun() {
   const livenessRef = useRef<LivenessRunController | null>(null);
   const guardRef = useRef<SessionGuard | null>(null);
   const runtimeRef = useRef<DungeonRuntime | null>(null);
-  const transitionTimerRef = useRef<number | null>(null);
 
-  // State khởi tạo tất định (seed: 0) để SSR và Client khớp nhau 100%
+  const breatherTimerRef = useRef<number | null>(null);
+  const breatherTickRef = useRef<number | null>(null);
+  const bossIntroTimerRef = useRef<number | null>(null);
+  const bossFinisherTimerRef = useRef<number | null>(null);
+  const levelUpTimerRef = useRef<number | null>(null);
+
+  // Khởi tạo tất định (seed: 0) cho SSR để tránh lỗi hydration của Next.js
   const [uiState, setUiState] = useState<DungeonRunUiState>(() => {
     const placeholderDungeon = createDungeonRunState({
       seed: 0,
@@ -252,25 +337,77 @@ export function useDungeonRun() {
       startingTotalXp: 0,
     });
     return snapshotUi(
-      createRuntime(placeholderDungeon, createPlaceholderLivenessSnapshot()),
+      createRuntime(placeholderDungeon, createPlaceholderLivenessSnapshot(), 1),
       false
     );
   });
 
-  const clearTransitionTimer = useCallback(() => {
-    if (transitionTimerRef.current !== null) {
-      window.clearTimeout(transitionTimerRef.current);
-      transitionTimerRef.current = null;
+  const playSfx = useCallback(
+    (effect: Parameters<typeof playGameSound>[0]) => {
+      playGameSound(effect, useGameStore.getState().soundEnabled);
+    },
+    []
+  );
+
+  const clearAllTimers = useCallback(() => {
+    if (breatherTimerRef.current !== null) {
+      window.clearTimeout(breatherTimerRef.current);
+      breatherTimerRef.current = null;
+    }
+    if (breatherTickRef.current !== null) {
+      window.clearInterval(breatherTickRef.current);
+      breatherTickRef.current = null;
+    }
+    if (bossIntroTimerRef.current !== null) {
+      window.clearTimeout(bossIntroTimerRef.current);
+      bossIntroTimerRef.current = null;
+    }
+    if (bossFinisherTimerRef.current !== null) {
+      window.clearTimeout(bossFinisherTimerRef.current);
+      bossFinisherTimerRef.current = null;
+    }
+    if (levelUpTimerRef.current !== null) {
+      window.clearTimeout(levelUpTimerRef.current);
+      levelUpTimerRef.current = null;
     }
   }, []);
 
-  /** Tạo bộ đếm mới khi chuyển sang quái có động tác khác. */
+  /** Hiện màn chúc mừng lên cấp (<2s) kèm kỹ năng vừa mở và phát tiếng lên cấp. */
+  const triggerLevelUpBanner = useCallback(
+    (fromLevel: number, toLevel: number) => {
+      const rt = runtimeRef.current;
+      if (!rt || toLevel <= rt.highestCelebratedLevel) return;
+
+      const unlockedSkills = getNewlyUnlockedSkills(fromLevel, toLevel);
+      rt.highestCelebratedLevel = toLevel;
+      rt.levelUpSeq += 1;
+      rt.levelUpCelebration = {
+        newLevel: toLevel,
+        unlockedSkills,
+        seq: rt.levelUpSeq,
+      };
+
+      playSfx('levelUp');
+
+      if (levelUpTimerRef.current !== null) {
+        window.clearTimeout(levelUpTimerRef.current);
+      }
+      levelUpTimerRef.current = window.setTimeout(() => {
+        const cur = runtimeRef.current;
+        if (!cur) return;
+        cur.levelUpCelebration = null;
+        setUiState(snapshotUi(cur, true));
+      }, FX_CONFIG.levelUpBannerMs);
+    },
+    [playSfx]
+  );
+
   const switchCounterToExercise = useCallback((exerciseId: ExerciseId) => {
     counterRef.current = new RepCounter(EXERCISES[exerciseId]);
     stabilityGateRef.current?.reset();
   }, []);
 
-  /** Kết thúc lượt & gọi finalizeRun() đúng MỘT lần, rồi ghi kết quả vào Zustand. */
+  /** Kết thúc lượt & gọi finalizeRun() đúng MỘT lần, rồi quay rương cosmetic theo verdict. */
   const finalizeCurrentRun = useCallback(
     (endedAtMs: number) => {
       const rt = runtimeRef.current;
@@ -278,11 +415,15 @@ export function useDungeonRun() {
       const livenessCtrl = livenessRef.current;
       if (!rt || !guard || !livenessCtrl || rt.finalized) return;
 
-      clearTransitionTimer();
+      clearAllTimers();
       rt.finalized = true;
       rt.paused = false;
       rt.inRep = false;
       rt.awaitingRest = false;
+      rt.breatherEndWallMs = null;
+      rt.breatherTip = null;
+      rt.bossIntroEndWallMs = null;
+      rt.bossFinisherPending = false;
       rt.dungeon = {
         ...rt.dungeon,
         phase: 'finished',
@@ -309,24 +450,46 @@ export function useDungeonRun() {
         summary
       );
 
+      // Quay rương cosmetic thuần theo seed & verdict (verified: 4 bậc, review: chỉ thường, rejected: null)
+      rt.lootRoll = rollLootChest(summary.seed, summary.verdict);
+      rt.chestOpened = false;
       rt.summary = summary;
       rt.liveness = livenessSnap;
+
+      if (summary.levelAfter > summary.levelBefore) {
+        triggerLevelUpBanner(summary.levelBefore, summary.levelAfter);
+      }
+
       setUiState(snapshotUi(rt, true));
     },
-    [clearTransitionTimer]
+    [clearAllTimers, triggerLevelUpBanner]
   );
 
-  /** Hoàn tất bước chuyển từ quái vừa bị hạ sang quái kế tiếp (~1s). */
+  /** Kết thúc giai đoạn nghỉ lấy hơi 4s và chuyển sang quái kế tiếp (kèm màn vào Boss nếu là Boss). */
   const completeMonsterTransition = useCallback(
     (nowMs: number) => {
       const rt = runtimeRef.current;
       if (!rt || rt.dungeon.phase !== 'transitioning') return;
 
-      clearTransitionTimer();
-      const nextDungeon = advanceMonsterTransition(rt.dungeon, nowMs);
+      if (breatherTimerRef.current !== null) {
+        window.clearTimeout(breatherTimerRef.current);
+        breatherTimerRef.current = null;
+      }
+      if (breatherTickRef.current !== null) {
+        window.clearInterval(breatherTickRef.current);
+        breatherTickRef.current = null;
+      }
+
+      const advanceAt = Math.max(
+        nowMs,
+        (rt.dungeon.transitionUntilMs ?? nowMs) + 10
+      );
+      const nextDungeon = advanceMonsterTransition(rt.dungeon, advanceAt);
       if (nextDungeon === rt.dungeon) return;
 
       rt.dungeon = nextDungeon;
+      rt.breatherEndWallMs = null;
+      rt.breatherTip = null;
       rt.inRep = false;
       rt.awaitingRest = false;
       rt.progress = 0;
@@ -343,17 +506,54 @@ export function useDungeonRun() {
         switchCounterToExercise(nextMonster.exercise);
         rt.hintText = i18n.play.practice.exercises[nextMonster.exercise].readyCue;
         rt.hintTone = 'neutral';
+
+        // Màn vào riêng cho Boss cuối
+        if (nextMonster.isBoss) {
+          rt.bossIntroEndWallMs = performance.now() + FX_CONFIG.bossIntroMs;
+          playSfx('bossIntro');
+          if (bossIntroTimerRef.current !== null) {
+            window.clearTimeout(bossIntroTimerRef.current);
+          }
+          bossIntroTimerRef.current = window.setTimeout(() => {
+            const cur = runtimeRef.current;
+            if (!cur) return;
+            cur.bossIntroEndWallMs = null;
+            setUiState(snapshotUi(cur, true));
+          }, FX_CONFIG.bossIntroMs);
+        }
       }
 
       setUiState(snapshotUi(rt, true));
     },
-    [clearTransitionTimer, finalizeCurrentRun, switchCounterToExercise]
+    [finalizeCurrentRun, playSfx, switchCounterToExercise]
   );
 
-  /** Khởi tạo một lượt Dungeon Run mới (thường hoặc Lượt mẫu 3 quái × 2 rep). */
+  /** Người chơi bấm "Sẵn sàng ngay" để bỏ qua phần nghỉ lấy hơi còn lại. */
+  const skipBreather = useCallback(() => {
+    unlockGameAudio();
+    const rt = runtimeRef.current;
+    if (!rt || rt.dungeon.phase !== 'transitioning') return;
+    completeMonsterTransition(
+      rt.lastFrameT > 0 ? rt.lastFrameT : performance.now()
+    );
+  }, [completeMonsterTransition]);
+
+  /** Mở rương chiến lợi phẩm sau lượt và lưu vật phẩm cosmetic vào Zustand (RAM). */
+  const openLootChest = useCallback(() => {
+    unlockGameAudio();
+    const rt = runtimeRef.current;
+    if (!rt || !rt.lootRoll || rt.chestOpened) return;
+
+    rt.chestOpened = true;
+    useGameStore.getState().claimCosmetic(rt.lootRoll.item);
+    playSfx('chestOpen');
+    setUiState(snapshotUi(rt, true));
+  }, [playSfx]);
+
+  /** Khởi tạo lượt Dungeon Run mới (thường hoặc Lượt mẫu 3 quái × 2 rep). */
   const startNewRun = useCallback(
     (isSampleRun = false) => {
-      clearTransitionTimer();
+      clearAllTimers();
 
       const { seed, isFixed } = createDungeonSeed();
       const store = useGameStore.getState();
@@ -366,7 +566,6 @@ export function useDungeonRun() {
       });
 
       const firstExercise = dungeon.encounters[0]?.exercise ?? 'squat';
-      // Dùng hạt giống lệch bit cho lịch thử thách sống để độc lập với chuỗi quái
       const livenessSeed = (seed ^ 0x5f3759df) >>> 0;
       const livenessCtrl = new LivenessRunController(livenessSeed, isFixed);
 
@@ -378,26 +577,26 @@ export function useDungeonRun() {
 
       store.startLivenessRun(livenessSeed, livenessCtrl.scheduledCount);
 
-      const rt = createRuntime(dungeon, livenessCtrl.getSnapshot());
+      const startingLevel = getLevelFromXp(store.totalXp);
+      const rt = createRuntime(dungeon, livenessCtrl.getSnapshot(), startingLevel);
       runtimeRef.current = rt;
       setUiState(snapshotUi(rt, true));
     },
-    [clearTransitionTimer]
+    [clearAllTimers]
   );
 
-  // Chỉ sinh seed và khởi tạo lượt đầu tiên phía client sau khi mount
   useEffect(() => {
     startNewRun(false);
     return () => {
-      clearTransitionTimer();
+      clearAllTimers();
     };
-  }, [startNewRun, clearTransitionTimer]);
+  }, [startNewRun, clearAllTimers]);
 
-  /** Tạm dừng / Tiếp tục lượt (khóa không cho tạm dừng trong lúc đang có Thử thách sống). */
   const togglePause = useCallback(() => {
+    unlockGameAudio();
     const rt = runtimeRef.current;
     if (!rt || rt.finalized || rt.dungeon.phase !== 'fighting') return;
-    if (rt.liveness.activeChallenge !== null) return;
+    if (rt.liveness.activeChallenge !== null || rt.bossFinisherPending) return;
 
     rt.paused = !rt.paused;
     if (rt.paused) {
@@ -410,10 +609,16 @@ export function useDungeonRun() {
     setUiState(snapshotUi(rt, true));
   }, []);
 
-  /** Kỹ năng hoạt động thật: "Đổi quái miễn phí" (1 lần/lượt, sang động tác khác). */
   const swapMonster = useCallback(() => {
+    unlockGameAudio();
     const rt = runtimeRef.current;
-    if (!rt || rt.finalized || rt.paused || rt.dungeon.phase !== 'fighting') {
+    if (
+      !rt ||
+      rt.finalized ||
+      rt.paused ||
+      rt.bossFinisherPending ||
+      rt.dungeon.phase !== 'fighting'
+    ) {
       return;
     }
     if (rt.liveness.activeChallenge !== null || rt.dungeon.swapsRemaining <= 0) {
@@ -441,8 +646,8 @@ export function useDungeonRun() {
     setUiState(snapshotUi(rt, true));
   }, [switchCounterToExercise]);
 
-  /** Người chơi chủ động bấm "Kết thúc lượt" sớm để gọi finalizeRun và xem tổng kết. */
   const finishRunNow = useCallback(() => {
+    unlockGameAudio();
     const rt = runtimeRef.current;
     if (!rt || rt.finalized) return;
     const endedAt = rt.lastFrameT > 0 ? rt.lastFrameT : performance.now();
@@ -465,8 +670,10 @@ export function useDungeonRun() {
 
       rt.lastFrameT = frame.t;
 
-      // Đã kết thúc lượt -> không xử lý thêm
-      if (rt.finalized || rt.dungeon.phase === 'finished') return;
+      // Đã tổng kết hoặc đang chạy hiệu ứng làm chậm 0,5s đòn kết liễu Boss
+      if (rt.finalized || rt.bossFinisherPending || rt.dungeon.phase === 'finished') {
+        return;
+      }
 
       let forceSync = false;
 
@@ -477,22 +684,23 @@ export function useDungeonRun() {
         filter.reset();
       }
 
-      // 2. Xử lý giai đoạn chờ ~1s sau khi vừa hạ quái
+      // 2. Giai đoạn "Nghỉ lấy hơi" 4s giữa các quái (tạm dừng đếm rep)
       if (rt.dungeon.phase === 'transitioning') {
-        if (
-          rt.dungeon.transitionUntilMs !== null &&
-          frame.t >= rt.dungeon.transitionUntilMs
-        ) {
-          completeMonsterTransition(frame.t);
-        } else if (frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
+        if (frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
           rt.lastUiSyncAt = frame.t;
           setUiState(snapshotUi(rt, true));
         }
         return;
       }
 
-      // 3. Nếu đang tạm dừng -> giữ nguyên trạng thái, không đếm rep
-      if (rt.paused) return;
+      // 3. Tạm dừng hoặc đang hiện màn chào sân Boss cuối
+      const nowWall = performance.now();
+      if (
+        rt.paused ||
+        (rt.bossIntroEndWallMs !== null && nowWall < rt.bossIntroEndWallMs)
+      ) {
+        return;
+      }
 
       const currentMonster = rt.dungeon.encounters[rt.dungeon.currentIndex];
       if (!currentMonster) return;
@@ -523,12 +731,11 @@ export function useDungeonRun() {
         forceSync = true;
       }
 
-      // Ghi nhận mốc bắt đầu lượt ngay khi người tập ở khung hình sẵn sàng lần đầu
       if (frameSnap.stableOk && rt.dungeon.startedAtMs === null) {
         rt.dungeon = { ...rt.dungeon, startedAtMs: frame.t };
       }
 
-      // 5. Lớp 3b: SessionGuard + Thử thách sống theo seed
+      // 5. Lớp 3b: SessionGuard + Thử thách sống theo seed + tiếng bíp đếm ngược mỗi giây
       guard.onFrame(frame);
       const prevChallengeId = rt.liveness.activeChallenge?.id ?? null;
       const livenessStep = livenessCtrl.onFrame(
@@ -543,6 +750,7 @@ export function useDungeonRun() {
         rt.awaitingRest = false;
         rt.progress = 0;
         rt.currentHoldMs = 0;
+        rt.lastChallengeSecond = null;
         rt.hintText = i18n.play.practice.status.challengePaused;
         rt.hintTone = 'warning';
         forceSync = true;
@@ -551,6 +759,7 @@ export function useDungeonRun() {
       if (livenessStep.completedOutcome) {
         const passed = livenessStep.completedOutcome.passed;
         useGameStore.getState().recordChallengeOutcome(passed);
+        rt.lastChallengeSecond = null;
         rt.recentChallengeOutcome = passed ? 'passed' : 'failed';
         rt.recentOutcomeUntil = frame.t + OUTCOME_BANNER_MS;
         rt.postRepHint = passed
@@ -561,13 +770,19 @@ export function useDungeonRun() {
         forceSync = true;
       }
 
-      const currentChallengeId = rt.liveness.activeChallenge?.id ?? null;
-      if (prevChallengeId !== currentChallengeId) {
+      const activeChallenge = rt.liveness.activeChallenge;
+      if (prevChallengeId !== (activeChallenge?.id ?? null)) {
         forceSync = true;
       }
 
-      // Tạm dừng đếm rep trong khi Thử thách sống đang hiện
-      if (rt.liveness.activeChallenge !== null) {
+      // Phát tiếng bíp đếm ngược từng giây khi thử thách sống đang mở
+      if (activeChallenge !== null) {
+        const secLeft = Math.ceil(activeChallenge.remainingMs / 1000);
+        if (secLeft > 0 && secLeft !== rt.lastChallengeSecond) {
+          rt.lastChallengeSecond = secLeft;
+          playSfx('challengeTick');
+        }
+
         rt.hintText = i18n.play.practice.status.challengePaused;
         rt.hintTone = 'warning';
         if (forceSync || frame.t - rt.lastUiSyncAt >= UI_SYNC_INTERVAL_MS) {
@@ -577,13 +792,12 @@ export function useDungeonRun() {
         return;
       }
 
-      // 6. Chỉ đếm rep khi khung hình ở trạng thái "Sẵn sàng"
+      // 6. Chỉ đếm rep khi khung hình đạt trạng thái "Sẵn sàng"
       if (!frameSnap.stableOk) {
         if (rt.inRep && !rt.awaitingRest) {
           rt.cancelledReason = frameSnap.stableReason ?? 'NO_POSE';
           rt.cancelledUntil = frame.t + CANCELLED_BANNER_MS;
           rt.inRep = false;
-          // Hủy rep -> reset combo về 0
           rt.dungeon = applyCancelledRepToDungeon(rt.dungeon);
           forceSync = true;
         }
@@ -637,28 +851,94 @@ export function useDungeonRun() {
           rt.inRep = false;
           rt.cancelledReason = null;
 
+          const prevTentativeLevel = getLevelFromXp(
+            rt.dungeon.startingTotalXp + rt.dungeon.tentativeXpEarned
+          );
+          const wasBoss = currentMonster.isBoss;
           const nextDungeon = applyRepToDungeon(rt.dungeon, rep, frame.t);
           rt.dungeon = nextDungeon;
 
           if (rep.counted && nextDungeon.lastHit) {
+            const hit = nextDungeon.lastHit;
             rt.hitSeq += 1;
             rt.hitVisibleUntil = frame.t + HIT_BANNER_MS;
 
+            // Kiểm tra mốc cổ vũ Combo x5 / x10
+            const milestone = getComboMilestone(nextDungeon.combo);
+            if (milestone !== null) {
+              rt.comboCheer = milestone;
+              rt.comboCheerEndWallMs =
+                performance.now() + FX_CONFIG.comboCheerMs;
+              playSfx('comboMilestone');
+            }
+
+            // Kiểm tra lên cấp tạm trong lúc đánh để hiện chúc mừng <2s ngay lập tức
+            const nextTentativeLevel = getLevelFromXp(
+              nextDungeon.startingTotalXp + nextDungeon.tentativeXpEarned
+            );
+            if (nextTentativeLevel > prevTentativeLevel) {
+              triggerLevelUpBanner(prevTentativeLevel, nextTentativeLevel);
+            }
+
             if (nextDungeon.phase === 'finished') {
+              // Đòn kết liễu Boss: hiệu ứng làm chậm đặc biệt 0,5s trước khi vào màn tổng kết
+              if (wasBoss && hit.defeatedMonster) {
+                playSfx('bossFinisher');
+                rt.bossFinisherPending = true;
+                rt.hintText = i18n.dungeon.boss.finisherBadge;
+                rt.hintTone = 'success';
+                setUiState(snapshotUi(rt, true));
+
+                const endT = frame.t;
+                bossFinisherTimerRef.current = window.setTimeout(() => {
+                  finalizeCurrentRun(endT);
+                }, FX_CONFIG.bossFinisherMs);
+                return;
+              }
+
+              playSfx('defeat');
               finalizeCurrentRun(frame.t);
               return;
             }
 
             if (nextDungeon.phase === 'transitioning') {
+              // Vừa hạ 1 quái -> phát tiếng hạ quái & mở giai đoạn "Nghỉ lấy hơi" 4s
+              playSfx('defeat');
+              const tips = i18n.dungeon.breather.tips;
+              const tipIdx = getBreatherTipIndex(
+                currentMonster.stageNumber,
+                nextDungeon.seed,
+                tips.length
+              );
+              rt.breatherTip = tips[tipIdx] ?? tips[0];
+              rt.breatherEndWallMs =
+                performance.now() + FX_CONFIG.breatherDurationMs;
               rt.hintText = i18n.dungeon.defeatedBanner;
               rt.hintTone = 'success';
-              // Hẹn giờ dự phòng ~1s để vẫn chuyển quái mượt kể cả khi người chơi tạm rời khung ăn mừng
-              clearTransitionTimer();
-              const targetAt = nextDungeon.transitionUntilMs ?? frame.t + DUNGEON_CONFIG.transitionDelayMs;
-              transitionTimerRef.current = window.setTimeout(() => {
-                completeMonsterTransition(targetAt + 10);
-              }, DUNGEON_CONFIG.transitionDelayMs);
+
+              if (breatherTimerRef.current !== null) {
+                window.clearTimeout(breatherTimerRef.current);
+              }
+              if (breatherTickRef.current !== null) {
+                window.clearInterval(breatherTickRef.current);
+              }
+
+              // Cập nhật đồng hồ nghỉ lấy hơi mỗi 150ms (kể cả khi người chơi tạm rời khung)
+              breatherTickRef.current = window.setInterval(() => {
+                const cur = runtimeRef.current;
+                if (!cur || cur.dungeon.phase !== 'transitioning') return;
+                setUiState(snapshotUi(cur, true));
+              }, 150);
+
+              const capturedT = frame.t;
+              breatherTimerRef.current = window.setTimeout(() => {
+                completeMonsterTransition(
+                  capturedT + FX_CONFIG.breatherDurationMs
+                );
+              }, FX_CONFIG.breatherDurationMs);
             } else {
+              // Đòn đánh thường hoặc chí mạng chưa hạ quái
+              playSfx(hit.isCrit ? 'crit' : 'hit');
               const statusTexts = i18n.play.practice.status;
               if (rep.flags.length === 0) {
                 rt.postRepHint = isHold
@@ -761,7 +1041,12 @@ export function useDungeonRun() {
         setUiState(snapshotUi(rt, true));
       }
     },
-    [clearTransitionTimer, completeMonsterTransition, finalizeCurrentRun]
+    [
+      completeMonsterTransition,
+      finalizeCurrentRun,
+      playSfx,
+      triggerLevelUpBanner,
+    ]
   );
 
   return {
@@ -769,6 +1054,8 @@ export function useDungeonRun() {
     pushFrame,
     togglePause,
     swapMonster,
+    skipBreather,
+    openLootChest,
     finishRunNow,
     startNewRun,
   };

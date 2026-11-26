@@ -9,6 +9,7 @@ import {
   type DungeonSummaryData,
   type VerifiedRepCounts,
 } from '@/lib/game/dungeon';
+import type { CosmeticItem, CosmeticItemId } from '@/lib/game/cosmetics';
 
 /**
  * Thống kê tạm thời của thử thách sống (lớp 3b) trong lượt tập hiện tại.
@@ -21,6 +22,12 @@ export interface LivenessRunStats {
   failed: number;
 }
 
+export interface EquippedCosmetics {
+  skin: CosmeticItemId | null;
+  frame: CosmeticItemId | null;
+  title: CosmeticItemId | null;
+}
+
 const createEmptyLivenessStats = (): LivenessRunStats => ({
   seed: null,
   scheduledCount: 0,
@@ -28,19 +35,24 @@ const createEmptyLivenessStats = (): LivenessRunStats => ({
   failed: 0,
 });
 
+const createEmptyEquipped = (): EquippedCosmetics => ({
+  skin: null,
+  frame: null,
+  title: null,
+});
+
 /**
  * Trạng thái nhân vật & trò chơi trong bộ nhớ (Zustand — KHÔNG dùng persist / localStorage).
- * Tải lại trang sẽ đặt lại toàn bộ tiến độ về ban đầu.
+ * Giữ nguyên toàn bộ khóa F1–F5a và bổ sung kho cosmetic + cài đặt âm thanh F5b trong RAM.
  */
 interface GameState {
-  /** Tên hiển thị tùy chọn nhập ở trang chủ. */
   displayName: string;
   setDisplayName: (name: string) => void;
 
   /** Tổng XP chính thức đã xác thực bởi finalizeRun trong lần tải trang này. */
   totalXp: number;
 
-  /** Tổng số rep đã xác thực theo từng động tác (dùng để tính chỉ số STR/AGI/VIT/WIS). */
+  /** Tổng số rep đã xác thực theo từng động tác (tính STR/AGI/VIT/WIS). */
   verifiedReps: VerifiedRepCounts;
 
   /** Số lượt Dungeon Run đã hoàn tất trong lần tải trang này. */
@@ -49,11 +61,21 @@ interface GameState {
   /** Dữ liệu tổng kết lượt gần nhất (lưu tạm trong RAM). */
   lastSummary: DungeonSummaryData | null;
 
-  /** Kết quả thử thách sống của lượt tập hiện tại (dùng cho F4 và F5a). */
+  /** Kết quả thử thách sống của lượt tập hiện tại. */
   livenessStats: LivenessRunStats;
   startLivenessRun: (seed: number, scheduledCount: number) => void;
   recordChallengeOutcome: (passed: boolean) => void;
   resetLivenessRun: () => void;
+
+  /** Cài đặt âm thanh Web Audio API (chỉ trong RAM). */
+  soundEnabled: boolean;
+  toggleSound: () => void;
+
+  /** Kho vật phẩm cosmetic mở được từ rương (chỉ trong RAM, không ảnh hưởng XP/sức mạnh). */
+  cosmeticInventory: CosmeticItem[];
+  equippedCosmetics: EquippedCosmetics;
+  claimCosmetic: (item: CosmeticItem) => void;
+  equipCosmetic: (item: CosmeticItem) => void;
 
   /**
    * Áp dụng kết quả đã được finalizeRun() xác nhận vào hồ sơ nhân vật trong RAM.
@@ -74,6 +96,40 @@ export const useGameStore = create<GameState>((set) => ({
   runsCompleted: 0,
   lastSummary: null,
   livenessStats: createEmptyLivenessStats(),
+
+  soundEnabled: true,
+  toggleSound: () => set((state) => ({ soundEnabled: !state.soundEnabled })),
+
+  cosmeticInventory: [],
+  equippedCosmetics: createEmptyEquipped(),
+
+  claimCosmetic: (item) =>
+    set((state) => {
+      const exists = state.cosmeticInventory.some((x) => x.id === item.id);
+      const nextInventory = exists
+        ? state.cosmeticInventory
+        : [...state.cosmeticInventory, item];
+
+      // Tự trang bị nếu ô loại đó đang trống
+      const nextEquipped: EquippedCosmetics = {
+        ...state.equippedCosmetics,
+        [item.slot]: state.equippedCosmetics[item.slot] ?? item.id,
+      };
+
+      return {
+        cosmeticInventory: nextInventory,
+        equippedCosmetics: nextEquipped,
+      };
+    }),
+
+  equipCosmetic: (item) =>
+    set((state) => ({
+      equippedCosmetics: {
+        ...state.equippedCosmetics,
+        [item.slot]:
+          state.equippedCosmetics[item.slot] === item.id ? null : item.id,
+      },
+    })),
 
   startLivenessRun: (seed, scheduledCount) =>
     set({

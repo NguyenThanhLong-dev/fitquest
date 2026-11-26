@@ -1,7 +1,6 @@
 /**
  * File nối DUY NHẤT giữa tầng game (lib/game/) và lõi pose-engine.ts.
- * Mọi phép tính XP, level, giới hạn XP, RNG theo seed và finalizeRun đều đi qua đây
- * để không bịa lại công thức và không sửa pose-engine.ts.
+ * Giữ nguyên toàn bộ logic F5a và re-export thêm kiểu `Rarity` của engine cho phần thưởng cosmetic F5b.
  */
 import {
   CONFIG,
@@ -14,6 +13,7 @@ import {
   xpForLevel,
   type ExerciseDef,
   type ExerciseId,
+  type Rarity,
   type RepResult,
   type RepSummary,
   type RunInput,
@@ -24,6 +24,7 @@ import {
 export type {
   ExerciseDef,
   ExerciseId,
+  Rarity,
   RepResult,
   RepSummary,
   RunInput,

@@ -11,11 +11,14 @@ import { MonsterStage } from '@/components/game/MonsterStage';
 import { SideObjectivesCard } from '@/components/game/SideObjectivesCard';
 import { SkillsPanel } from '@/components/game/SkillsPanel';
 import { RunSummary } from '@/components/game/RunSummary';
+import { LevelUpBanner } from '@/components/game/LevelUpBanner';
 import { usePoseLandmarker } from '@/lib/pose/usePoseLandmarker';
 import { useRepCounter } from '@/lib/pose/useRepCounter';
 import { useDungeonRun } from '@/lib/pose/useDungeonRun';
 import { LANDMARK_FILTER_CONFIG } from '@/lib/pose/landmarkFilter';
 import { MIRROR_HAND_MAPPING } from '@/lib/pose/liveness';
+import { FX_CONFIG } from '@/lib/game/cosmetics';
+import { unlockGameAudio } from '@/lib/game/sound';
 import { useGameStore } from '@/lib/game/store';
 import type { ExerciseId, Frame, Landmark } from '@/lib/pose-engine';
 import { i18n } from '@/lib/i18n';
@@ -42,26 +45,30 @@ const HINT_CARD_STYLES: Record<ProgressTone, string> = {
 };
 
 /**
- * Trang chơi chính ("/play") — Task F5a:
- * - Tab mặc định: "Dungeon Run" (đánh 3–5 quái + Boss bằng cơ thể, combo, chí mạng,
- *   mục tiêu phụ, thử thách sống F4, Đổi quái miễn phí, tổng kết bằng finalizeRun).
- * - Tab phụ: "Chế độ luyện tập" (giữ nguyên toàn bộ tính năng F3 + F4 để luyện riêng từng động tác).
+ * Trang chơi chính ("/play") — Task F5a + F5b:
+ * - Giữ nguyên toàn bộ logic Dungeon Run (F5a) và Chế độ luyện tập (F3 + F4).
+ * - F5b: nút bật/tắt tiếng Web Audio API (mở khóa sau lần bấm đầu tiên),
+ *   tự động giảm hiệu ứng khi `prefers-reduced-motion` hoặc `FPS < 20`,
+ *   màn chúc mừng lên cấp (<2s) và rương chiến lợi phẩm cosmetic sau lượt.
  */
 export default function PlayPage() {
   const displayName = useGameStore((state) => state.displayName);
   const verifiedReps = useGameStore((state) => state.verifiedReps);
+  const soundEnabled = useGameStore((state) => state.soundEnabled);
+  const toggleSound = useGameStore((state) => state.toggleSound);
 
   const [mode, setMode] = useState<PlayMode>('dungeon');
   const [selectedExercise, setSelectedExercise] = useState<ExerciseId>('squat');
   const [cameraReady, setCameraReady] = useState(false);
   const [videoSize, setVideoSize] = useState<VideoSize | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<PoseOverlayHandle | null>(null);
   const modeRef = useRef<PlayMode>(mode);
 
-  // Đọc tham số ?mode=practice phía client (tránh lỗi SSR/Suspense của Next.js)
+  // Đọc tham số ?mode=practice phía client (tránh lỗi SSR/Suspense)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('mode') === 'practice') {
@@ -69,11 +76,32 @@ export default function PlayPage() {
     }
   }, []);
 
+  // Lắng nghe prefers-reduced-motion của hệ điều hành (chỉ phía client)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setPrefersReducedMotion(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  // Mở khóa Web Audio API sau lần bấm/phím đầu tiên của người dùng (không tự phát trước đó)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleFirstGesture = () => unlockGameAudio();
+    window.addEventListener('pointerdown', handleFirstGesture, { once: true });
+    window.addEventListener('keydown', handleFirstGesture, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
+    };
+  }, []);
+
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
 
-  // Hook cho Chế độ luyện tập (F3 + F4) và Chế độ Dungeon Run (F5a)
   const practice = useRepCounter(selectedExercise);
   const dungeon = useDungeonRun();
 
@@ -88,12 +116,11 @@ export default function PlayPage() {
     []
   );
 
-  // Vẽ khung xương rút gọn trực tiếp lên canvas (không gây re-render React mỗi frame)
+  // Vẽ khung xương rút gọn trực tiếp lên canvas (không gây re-render React)
   const handlePose = useCallback((landmarks: readonly Landmark[] | null) => {
     overlayRef.current?.draw(landmarks);
   }, []);
 
-  // Điều hướng khung hình đúng về chế độ đang mở mà không làm khởi động lại vòng lặp MediaPipe
   const handleFrame = useCallback(
     (frame: Frame) => {
       if (modeRef.current === 'dungeon') {
@@ -105,7 +132,6 @@ export default function PlayPage() {
     [dungeon.pushFrame, practice.pushFrame]
   );
 
-  // Tạm dừng nhận diện AI khi đang xem màn hình tổng kết lượt
   const {
     status,
     error,
@@ -121,9 +147,9 @@ export default function PlayPage() {
     onFrame: handleFrame,
   });
 
-  // Chuyển chế độ giữa Dungeon Run và Luyện tập (tự tạm dừng Dungeon nếu đang đánh dở)
   const handleSwitchMode = useCallback(
     (nextMode: PlayMode) => {
+      unlockGameAudio();
       if (nextMode === mode) return;
       if (
         nextMode === 'practice' &&
@@ -137,7 +163,19 @@ export default function PlayPage() {
     [mode, dungeon]
   );
 
+  const handleToggleSound = useCallback(() => {
+    unlockGameAudio();
+    toggleSound();
+  }, [toggleSound]);
+
   const isAiActive = cameraReady && status === 'ready';
+  // Tự tắt hiệu ứng nặng khi FPS đo được rơi xuống dưới 20 (bỏ qua giá trị 0 lúc vừa khởi động)
+  const isLowFps =
+    isAiActive &&
+    !isShowingSummary &&
+    detectionFps > 0 &&
+    detectionFps < FX_CONFIG.lowFpsThreshold;
+  const reducedFx = prefersReducedMotion || isLowFps;
 
   // Dữ liệu hiển thị cho chế độ Dungeon Run
   const dungeonUi = dungeon.uiState;
@@ -189,8 +227,16 @@ export default function PlayPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-5 text-slate-100">
+      {/* Màn chúc mừng lên cấp (<2s), hiển thị trên cùng không chặn thao tác */}
+      {mode === 'dungeon' && dungeonUi.levelUpCelebration && (
+        <LevelUpBanner
+          celebration={dungeonUi.levelUpCelebration}
+          reducedFx={reducedFx}
+        />
+      )}
+
       <div className="mx-auto max-w-6xl space-y-4">
-        {/* Thanh tiêu đề + Chuyển chế độ Dungeon Run / Luyện tập + Nút Debug */}
+        {/* Thanh tiêu đề + Chuyển chế độ + Bật/tắt tiếng + Trạng thái giảm hiệu ứng + Debug */}
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-5 py-3">
           <div className="flex flex-wrap items-center gap-3">
             <div>
@@ -205,7 +251,6 @@ export default function PlayPage() {
               </p>
             </div>
 
-            {/* Bộ chuyển tab Dungeon Run <-> Chế độ luyện tập */}
             <div className="inline-flex rounded-xl border border-slate-800 bg-slate-950 p-1">
               <button
                 type="button"
@@ -230,9 +275,34 @@ export default function PlayPage() {
                 {i18n.play.modeTabs.practice}
               </button>
             </div>
+
+            {reducedFx && (
+              <span className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-[11px] font-semibold text-slate-300">
+                {i18n.dungeon.fx.reducedBadge} (
+                {isLowFps
+                  ? i18n.dungeon.fx.lowFpsTag
+                  : i18n.dungeon.fx.reducedMotionTag}
+                )
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Nút bật/tắt âm thanh Web Audio API */}
+            <button
+              type="button"
+              onClick={handleToggleSound}
+              className={`cursor-pointer rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                soundEnabled
+                  ? 'border-emerald-500/40 bg-emerald-950/40 text-emerald-200 hover:bg-emerald-950/70'
+                  : 'border-slate-700 bg-slate-950 text-slate-400 hover:bg-slate-800'
+              }`}
+            >
+              {soundEnabled
+                ? i18n.dungeon.sound.onLabel
+                : i18n.dungeon.sound.offLabel}
+            </button>
+
             {SHOW_DEBUG_TOOLS && (
               <button
                 type="button"
@@ -258,7 +328,7 @@ export default function PlayPage() {
           </div>
         </header>
 
-        {/* Thanh Debug riêng cho Dungeon Run (hiển thị cả lúc chơi và lúc xem tổng kết) */}
+        {/* Thanh Debug riêng cho Dungeon Run */}
         {SHOW_DEBUG_TOOLS && debugOpen && mode === 'dungeon' && (
           <section className="rounded-2xl border border-sky-500/40 bg-slate-900/95 p-4 font-mono text-xs text-slate-200">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -276,14 +346,20 @@ export default function PlayPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => dungeon.startNewRun(true)}
+                  onClick={() => {
+                    unlockGameAudio();
+                    dungeon.startNewRun(true);
+                  }}
                   className="cursor-pointer rounded-lg bg-sky-500 px-3 py-1.5 font-sans text-xs font-bold text-slate-950 transition hover:bg-sky-400"
                 >
                   {dungeonDebugTexts.sampleRunButton}
                 </button>
                 <button
                   type="button"
-                  onClick={() => dungeon.startNewRun(false)}
+                  onClick={() => {
+                    unlockGameAudio();
+                    dungeon.startNewRun(false);
+                  }}
                   className="cursor-pointer rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 font-sans text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
                 >
                   {i18n.dungeon.controls.newRun}
@@ -337,7 +413,6 @@ export default function PlayPage() {
               </div>
             </div>
 
-            {/* Lịch thử thách sống của lượt Dungeon hiện tại */}
             <div className="mt-3 border-t border-slate-800 pt-2.5">
               <span className="font-sans text-[11px] font-semibold text-slate-400">
                 {debugTexts.scheduleLabel} ({dungeonUi.liveness.schedule.length}):
@@ -360,7 +435,7 @@ export default function PlayPage() {
           </section>
         )}
 
-        {/* Thông báo tải / lỗi mô hình AI (khi không ở màn tổng kết) */}
+        {/* Thông báo tải / lỗi mô hình AI */}
         {!isShowingSummary && status === 'loading' && (
           <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-300">
             <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
@@ -388,16 +463,22 @@ export default function PlayPage() {
           </div>
         )}
 
-        {/* ═══════════════════════ CHẾ ĐỘ 1: DUNGEON RUN (F5a) ═══════════════════════ */}
+        {/* ═══════════════════════ CHẾ ĐỘ 1: DUNGEON RUN (F5a + F5b) ═══════════════════════ */}
         {mode === 'dungeon' &&
           (dungeonUi.summary ? (
             <RunSummary
               summary={dungeonUi.summary}
-              onPlayAgain={() => dungeon.startNewRun(false)}
+              lootRoll={dungeonUi.lootRoll}
+              chestOpened={dungeonUi.chestOpened}
+              reducedFx={reducedFx}
+              onOpenChest={dungeon.openLootChest}
+              onPlayAgain={() => {
+                unlockGameAudio();
+                dungeon.startNewRun(false);
+              }}
             />
           ) : (
             <div className="space-y-4">
-              {/* Banner kết quả thử thách sống vừa kết thúc */}
               {dungeonUi.recentChallengeOutcome && (
                 <div
                   className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
@@ -412,14 +493,13 @@ export default function PlayPage() {
                 </div>
               )}
 
-              {/* Bố cục chính: Cột trái Sân đấu quái + Camera, Cột phải Mục tiêu phụ & Nhân vật */}
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
                 <div className="space-y-4">
-                  {/* Sân đấu quái vật */}
                   {dungeonUi.currentMonster && (
                     <MonsterStage
                       dungeon={dungeonUi.dungeon}
                       monster={dungeonUi.currentMonster}
+                      nextMonster={dungeonUi.nextMonster}
                       xpInfo={dungeonUi.liveXpInfo}
                       activeHit={dungeonUi.activeHit}
                       hitSeq={dungeonUi.hitSeq}
@@ -438,19 +518,24 @@ export default function PlayPage() {
                           : i18n.play.practice.status.waitingCamera
                       }
                       hintTone={isAiActive ? dungeonUi.hintTone : 'neutral'}
+                      reducedFx={reducedFx}
+                      breatherRemainingMs={dungeonUi.breatherRemainingMs}
+                      breatherTip={dungeonUi.breatherTip}
+                      bossIntroActive={dungeonUi.bossIntroActive}
+                      bossFinisherActive={dungeonUi.bossFinisherActive}
+                      comboCheer={dungeonUi.comboCheer}
                       onTogglePause={dungeon.togglePause}
                       onSwapMonster={dungeon.swapMonster}
+                      onSkipBreather={dungeon.skipBreather}
                       onFinishRun={dungeon.finishRunNow}
                     />
                   )}
 
-                  {/* Trạng thái Lớp 0: Kiểm tra khung hình Sẵn sàng */}
                   <SetupCheck
                     snapshot={dungeonUi.frameCheck}
                     aiReady={isAiActive}
                   />
 
-                  {/* Camera + Khung xương + Thử thách sống */}
                   <CameraView
                     videoRef={videoRef}
                     onReadyChange={handleCameraReadyChange}
@@ -486,7 +571,11 @@ export default function PlayPage() {
                           {status === 'ready' && (
                             <>
                               <span className="text-slate-500">·</span>
-                              <span>
+                              <span
+                                className={
+                                  isLowFps ? 'font-bold text-amber-300' : ''
+                                }
+                              >
                                 {detectionFps} {i18n.play.hud.fpsUnit}
                               </span>
                               {delegate && (
@@ -515,6 +604,7 @@ export default function PlayPage() {
                     {isAiActive &&
                       !dungeonUi.liveness.activeChallenge &&
                       !dungeonUi.paused &&
+                      dungeonUi.dungeon.phase === 'fighting' &&
                       dungeonActiveWarning && (
                         <div className="pointer-events-none absolute inset-x-3 bottom-3">
                           <div
@@ -546,13 +636,12 @@ export default function PlayPage() {
                   </p>
                 </div>
 
-                {/* Cột phải: Mục tiêu phụ, Trạng thái thử thách sống, Chỉ số & Kỹ năng */}
+                {/* Cột phải: Mục tiêu phụ, Thử thách sống, Nhân vật (Cosmetic + Chỉ số + Kỹ năng) */}
                 <aside className="flex flex-col gap-4">
                   <SideObjectivesCard
                     objectives={dungeonUi.dungeon.sideObjectives}
                   />
 
-                  {/* Kết quả thử thách sống trong lượt */}
                   <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
                       {livenessTexts.statsLabel}
@@ -581,7 +670,6 @@ export default function PlayPage() {
         {/* ═══════════════════════ CHẾ ĐỘ 2: LUYỆN TẬP TỰ DO (F3 + F4) ═══════════════════════ */}
         {mode === 'practice' && (
           <div className="space-y-4">
-            {/* Thanh Lượt tập thử (F4) */}
             <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-5 py-3.5">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm font-semibold text-white">
@@ -645,7 +733,6 @@ export default function PlayPage() {
               </div>
             </section>
 
-            {/* Chọn 1 trong 5 động tác */}
             <section
               aria-label={i18n.play.practice.chooseExerciseLabel}
               className="rounded-2xl border border-slate-800 bg-slate-900 p-4"
@@ -931,7 +1018,6 @@ export default function PlayPage() {
                   )}
                 </div>
 
-                {/* Bảng Debug F4 + F3 cho chế độ luyện tập */}
                 {SHOW_DEBUG_TOOLS && debugOpen && (
                   <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950/90 p-4 font-mono text-xs text-slate-300">
                     <div className="flex items-center justify-between gap-2">

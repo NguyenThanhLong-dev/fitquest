@@ -1,10 +1,13 @@
 'use client';
 
+import type { Rarity } from '@/lib/game/engineAdapter';
 import {
   computeCharacterStats,
   getSkillsForLevel,
   type VerifiedRepCounts,
 } from '@/lib/game/dungeon';
+import { COSMETIC_BY_ID } from '@/lib/game/cosmetics';
+import { useGameStore } from '@/lib/game/store';
 import { i18n } from '@/lib/i18n';
 
 export interface SkillsPanelProps {
@@ -12,15 +15,41 @@ export interface SkillsPanelProps {
   verifiedReps: VerifiedRepCounts;
 }
 
+const RARITY_BADGE_STYLES: Record<Rarity, string> = {
+  common: 'bg-slate-800 text-slate-200 border-slate-600/60',
+  rare: 'bg-sky-500/20 text-sky-200 border-sky-400/50',
+  epic: 'bg-fuchsia-500/20 text-fuchsia-200 border-fuchsia-400/50',
+  legendary: 'bg-amber-500/20 text-amber-200 border-amber-400/60',
+};
+
 /**
- * Bảng chỉ số nhân vật (STR/AGI/VIT/WIS tính từ verifiedReps trong RAM)
- * và danh sách kỹ năng theo level (phân biệt rõ "Hoạt động thật" vs "Sắp có").
+ * Bảng nhân vật trong RAM:
+ * 1. Hồ sơ hiệp sĩ đang trang bị skin / khung avatar / danh hiệu cosmetic.
+ * 2. 4 chỉ số STR / AGI / VIT / WIS tính từ verifiedReps.
+ * 3. Kho trang bị Cosmetic mở được từ rương sau các lượt chơi (bấm để trang bị/tháo).
+ * 4. Danh sách kỹ năng theo level (phân biệt rõ "Hoạt động thật" vs "Sắp có").
  */
 export function SkillsPanel({ level, verifiedReps }: SkillsPanelProps) {
+  const displayName = useGameStore((state) => state.displayName);
+  const cosmeticInventory = useGameStore((state) => state.cosmeticInventory);
+  const equippedCosmetics = useGameStore((state) => state.equippedCosmetics);
+  const equipCosmetic = useGameStore((state) => state.equipCosmetic);
+
   const stats = computeCharacterStats(verifiedReps);
   const skills = getSkillsForLevel(level);
   const statTexts = i18n.dungeon.stats;
   const skillTexts = i18n.dungeon.skills;
+  const lootTexts = i18n.dungeon.loot;
+
+  const equippedSkin = equippedCosmetics.skin
+    ? COSMETIC_BY_ID[equippedCosmetics.skin]
+    : null;
+  const equippedFrame = equippedCosmetics.frame
+    ? COSMETIC_BY_ID[equippedCosmetics.frame]
+    : null;
+  const equippedTitle = equippedCosmetics.title
+    ? COSMETIC_BY_ID[equippedCosmetics.title]
+    : null;
 
   const statItems = [
     { key: 'str', label: statTexts.str, value: stats.str },
@@ -31,7 +60,47 @@ export function SkillsPanel({ level, verifiedReps }: SkillsPanelProps) {
 
   return (
     <div className="space-y-4">
-      {/* 4 chỉ số nhân vật */}
+      {/* 1. Thẻ nhân vật + hiệu ứng skin / khung avatar / danh hiệu đang trang bị */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+        <div className="flex items-center gap-3.5">
+          <div
+            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-slate-700 bg-slate-950 text-3xl ${
+              equippedFrame ? equippedFrame.accentClass : ''
+            }`}
+            aria-hidden="true"
+          >
+            {equippedSkin ? equippedSkin.icon : '🧑‍💻'}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-extrabold text-white">
+                {displayName.trim() || i18n.play.defaultPlayer}
+              </p>
+              <span className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                {i18n.dungeon.xpBar.levelPrefix} {level}
+              </span>
+            </div>
+
+            {equippedTitle ? (
+              <span
+                className={`mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${RARITY_BADGE_STYLES[equippedTitle.rarity]}`}
+              >
+                <span>{equippedTitle.icon}</span>
+                <span>{lootTexts.items[equippedTitle.id]}</span>
+              </span>
+            ) : (
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                {equippedSkin
+                  ? lootTexts.items[equippedSkin.id]
+                  : i18n.dungeon.modeBadge}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 2. 4 chỉ số nhân vật */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
         <h3 className="text-sm font-bold text-white">{statTexts.title}</h3>
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -49,7 +118,79 @@ export function SkillsPanel({ level, verifiedReps }: SkillsPanelProps) {
         </div>
       </div>
 
-      {/* Kỹ năng theo level */}
+      {/* 3. Kho vật phẩm Cosmetic mở từ rương (chỉ trong RAM) */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-white">
+            {lootTexts.inventoryTitle}
+          </h3>
+          <span className="font-mono text-xs text-slate-400">
+            {cosmeticInventory.length}
+          </span>
+        </div>
+
+        {cosmeticInventory.length === 0 ? (
+          <p className="mt-2.5 text-xs leading-relaxed text-slate-400">
+            {lootTexts.inventoryEmpty}
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {cosmeticInventory.map((item) => {
+              const isEquipped = equippedCosmetics[item.slot] === item.id;
+              return (
+                <li
+                  key={item.id}
+                  className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 ${
+                    isEquipped
+                      ? 'border-emerald-400/60 bg-emerald-950/35'
+                      : 'border-slate-800 bg-slate-950/70'
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span aria-hidden="true">{item.icon}</span>
+                      <span className="truncate text-xs font-bold text-white">
+                        {lootTexts.items[item.id]}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${RARITY_BADGE_STYLES[item.rarity]}`}
+                      >
+                        {lootTexts.rarities[item.rarity]}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {lootTexts.slots[item.slot]}
+                      </span>
+                      {isEquipped && (
+                        <span className="text-[10px] font-semibold text-emerald-300">
+                          • {lootTexts.equippedBadge}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => equipCosmetic(item)}
+                    className={`shrink-0 cursor-pointer rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${
+                      isEquipped
+                        ? 'border border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                        : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+                    }`}
+                  >
+                    {isEquipped
+                      ? lootTexts.unequipButton
+                      : lootTexts.equipButton}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* 4. Kỹ năng theo level */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
         <h3 className="text-sm font-bold text-white">{skillTexts.title}</h3>
         <ul className="mt-3 space-y-2">
